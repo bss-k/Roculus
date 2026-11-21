@@ -5,12 +5,12 @@
     - It is portaled to <body>, outside the app's #root, and #root gets the `inert` attribute,
       so nothing behind the drawer can be focused, clicked or read out.
     - `inert` alone would still let Tab run off the last button into the browser's own UI, so
-      Tab / Shift+Tab are wrapped around at the edges.
+      Tab / Shift+Tab are wrapped around at the edges (and pulled back in from <body>).
     - On open, focus moves to the close button; on close, it returns to whatever opened the
       drawer (usually the table row), so keyboard users don't lose their place.
   Esc or a click on the backdrop closes it.
 */
-import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 const FOCUSABLE =
@@ -43,24 +43,33 @@ export function Drawer({ title, subtitle, onClose, children }: DrawerProps) {
     };
   }, []);
 
+  // Keys are handled on the whole document, not just the panel: if the focused button is
+  // removed (e.g. the timeline's last "Load more"), focus falls to <body>, outside the panel,
+  // and the next Tab must still be pulled back in.
   useEffect(() => {
-    const onKey = (event: globalThis.KeyboardEvent) => {
+    const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
+      else if (event.key === "Tab") wrapTab(event);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   function wrapTab(event: KeyboardEvent) {
-    if (event.key !== "Tab" || !panel.current) return;
+    if (!panel.current) return;
     // tabIndex -1 elements (e.g. WindowSelect's unselected options) are focusable but not
     // reachable with Tab, so they can't be the edges we wrap at.
     const items = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.tabIndex >= 0);
     const first = items[0];
     const last = items.at(-1);
-    if (!first || !last) return;
     const active = document.activeElement;
-    if (event.shiftKey && (active === first || active === panel.current)) {
+    if (!first || !last) {
+      event.preventDefault();
+      panel.current.focus();
+    } else if (!panel.current.contains(active)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && (active === first || active === panel.current)) {
       event.preventDefault();
       last.focus();
     } else if (!event.shiftKey && active === last) {
@@ -80,7 +89,6 @@ export function Drawer({ title, subtitle, onClose, children }: DrawerProps) {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        onKeyDown={wrapTab}
       >
         <header className="drawer-header">
           <div className="drawer-title">

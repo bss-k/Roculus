@@ -25,7 +25,9 @@ interface PlayerDrawerProps {
 export function PlayerDrawer({ playerId, playerName, initialWindow, onClose }: PlayerDrawerProps) {
   const [windowId, setWindowId] = useState<WindowId>(initialWindow);
   const detail = usePolling((signal) => api.player(playerId, windowId, signal), 0, `${playerId}|${windowId}`);
-  const d = detail.data;
+  // After a window switch, the previous window's numbers would sit under the new labels: show
+  // skeletons until this window's data arrives instead.
+  const d = detail.stale ? undefined : detail.data;
   const p = d?.player;
   const updating = detail.loading && d !== undefined;
 

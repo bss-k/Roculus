@@ -32,7 +32,8 @@ export function Remotes() {
   const [sort, setSort] = useState<RemoteSort>("total");
   const [drawer, setDrawer] = useState<DrawerState>(null);
   const list = usePolling((signal) => api.remotes({ window: windowId, sort }, signal), POLL_MS, `${windowId}|${sort}`);
-  const rows = list.data;
+  // Previous filters' rows stay (dimmed) while the new ones load, but not after that failed.
+  const rows = list.stale && !list.loading ? undefined : list.data;
 
   const filters = (
     <div className="filters">
@@ -59,7 +60,7 @@ export function Remotes() {
     body = (
       <RemotesTable
         rows={rows}
-        updating={list.loading}
+        updating={list.loading || list.stale}
         onOpen={(r) => setDrawer({ kind: "remote", remote: r.remote, window: windowId })}
       />
     );
@@ -70,7 +71,7 @@ export function Remotes() {
       <Panel title="Remotes" action={filters}>
         {list.error && (
           <div className="banner">
-            {rows ? "Couldn't refresh: " : "Can't reach the API: "}
+            {rows && !list.stale ? "Couldn't refresh: " : "Couldn't load remotes: "}
             {list.error}
           </div>
         )}

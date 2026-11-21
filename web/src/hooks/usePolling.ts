@@ -6,6 +6,9 @@ export interface PollState<T> {
   // True from a (re)start until its first response; background refreshes don't set it, so
   // screens can dim stale data while a new filter loads instead of flashing a skeleton.
   loading: boolean;
+  // True when `data` was fetched for a different `key` than the current one: a filter just
+  // changed and its response hasn't arrived yet (or failed). Never present it as current.
+  stale: boolean;
 }
 
 /*
@@ -21,21 +24,27 @@ export function usePolling<T>(
   key = "",
   enabled = true,
 ): PollState<T> {
-  const [state, setState] = useState<PollState<T>>({ data: undefined, error: undefined, loading: true });
+  const [state, setState] = useState<{ data?: T; dataKey?: string; error?: string; loading: boolean }>({
+    loading: true,
+  });
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      // Disabling aborts any fetch in flight, so it will never clear `loading` itself.
+      setState((prev) => (prev.loading ? { ...prev, loading: false } : prev));
+      return;
+    }
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    setState((prev) => (prev.loading ? prev : { ...prev, loading: true }));
+    setState((prev) => ({ ...prev, error: undefined, loading: true }));
 
     const tick = async () => {
       try {
         const data = await fetcher(controller.signal);
-        setState({ data, error: undefined, loading: false });
+        setState({ data, dataKey: key, error: undefined, loading: false });
       } catch (err) {
         if (controller.signal.aborted) return;
-        setState((prev) => ({ data: prev.data, error: (err as Error).message, loading: false }));
+        setState((prev) => ({ ...prev, error: (err as Error).message, loading: false }));
       }
       if (intervalMs > 0 && !controller.signal.aborted) timer = setTimeout(tick, intervalMs);
     };
@@ -48,5 +57,10 @@ export function usePolling<T>(
     // The fetcher is re-created each render; `key` is the explicit restart signal.
   }, [intervalMs, key, enabled]);
 
-  return state;
+  return {
+    data: state.data,
+    error: state.error,
+    loading: state.loading,
+    stale: state.data !== undefined && state.dataKey !== key,
+  };
 }

@@ -43,7 +43,7 @@ any refusal → one rejected_requests row (reason, key if known, ip, route, deta
 | Folder | What's in it |
 | --- | --- |
 | `api/` | Node + TypeScript + Fastify API, SQL migrations, key and seed scripts, Vitest tests |
-| `web/` | React + TypeScript + Vite dashboard (Overview, Violations) |
+| `web/` | React + TypeScript + Vite dashboard (Overview, Violations, Players, Remotes) |
 | `roblox/` | `OculusClient.luau`, the server-side module that ships events |
 
 ## Local setup
@@ -53,7 +53,7 @@ Requires Node 20+ and Docker.
 ```bash
 docker compose up -d db   # Postgres on localhost:5432 (also creates the test database)
 npm install
-npm run setup             # migrations + ~1.8k demo events; writes a dev read key to web/.env.local
+npm run setup             # migrations + ~2.2k demo events; writes a dev read key to web/.env.local
 npm run dev               # API on :3000, dashboard on http://localhost:5173
 ```
 
@@ -66,7 +66,7 @@ but the API is on the public internet, so anyone can try. Each defense covers on
 
 | Threat | Defense | Where |
 | --- | --- | --- |
-| Someone posts fake events or reads another game's data | Per-game API key in `Authorization: Bearer`; every query is scoped to the key's game | `plugins/guards.ts`, `repo/stats.ts` |
+| Someone posts fake events or reads another game's data | Per-game API key in `Authorization: Bearer`; every query is scoped to the key's game | `plugins/guards.ts`, `repo/` |
 | Database leak exposes working keys | Keys stored as SHA-256 hashes only; the raw key is printed once at creation | `lib/keys.ts`, `bin/create-key.ts` |
 | Dashboard credentials let someone post events | Separate `read` and `ingest` key scopes; wrong scope → 403 | `api_keys.scope` |
 | Read key leaks from the browser | The browser never sees it: the Vite proxy (dev) or nginx (deploy) adds it server-side | `web/vite.config.ts`, `web/nginx.conf.template` |
@@ -99,7 +99,19 @@ All endpoints need `Authorization: Bearer <key>`. Every refusal returns `{ "erro
 | GET | `/v1/stats/summary` | read | 24h totals, enforce/shadow split, unique players/servers, counts by rule |
 | GET | `/v1/stats/hourly` | read | 24 hourly buckets `{ hour, shadow, enforce }` |
 | GET | `/v1/stats/top-remotes?limit=5` | read | most-hit remotes, 24h (limit 1–20) |
-| GET | `/v1/violations?rule=&limit=50&cursor=` | read | newest first, keyset-paginated (`nextCursor`) |
+| GET | `/v1/violations?rule=&playerId=&remote=&limit=50&cursor=` | read | newest first, keyset-paginated (`nextCursor`); optional rule / player / remote filters |
+| GET | `/v1/players?window=24h&sort=total&q=&limit=25&offset=0` | read | one row per player: latest name, total/enforced/shadowed, rules hit, remotes hit, first/last seen. `sort`: `total`, `enforced`, `lastSeen`. `q`: name prefix, or an exact player ID if numeric. Offset-paginated (`nextOffset`; limit ≤ 50, offset ≤ 1000) |
+| GET | `/v1/players/:playerId?window=24h` | read | summary, `byRule`, `byRemote`, distinct servers, time `buckets`; 404 if the player has no events in this game |
+| GET | `/v1/remotes?window=24h&sort=total` | read | one row per remote (up to 200): totals, unique players, `byRule`, last seen, current `mode` (of its newest event), time `buckets` for a sparkline. `sort`: `total`, `enforced`, `uniquePlayers` |
+| GET | `/v1/remotes/:remote?window=24h` | read | summary, `byRule`, top 10 players, time `buckets`; 404 if the remote has no events in this game. URL-encode the name (≤ 100 chars) |
+
+`window` is `1h`, `24h` (default) or `7d`. Chart `buckets` are `{ start, shadow, enforce }`, oldest first:
+12 × 5 min, 24 × 1 h or 28 × 6 h. They are rolling (the newest ends at the time of the request), and
+each response's queries read one database snapshot, so buckets and breakdowns always add up to the
+totals. Player and remote lists use offset paging because they are sorted by counts computed per
+request, which no index can seek on; the violations list keeps keyset paging. A remote named exactly
+`.` or `..` can't be opened by path (URL parsers drop dot segments), but still shows in lists and
+timelines.
 
 Event shape (`timestamp` is Unix milliseconds):
 
@@ -138,15 +150,23 @@ docker compose --profile deploy up -d --build
 ```
 
 The API listens on `:3000` (applies migrations on start), the dashboard on `:8080`, and Postgres
-is bound to localhost only.
+is bound to localhost only. The dashboard container refuses to start if `OCULUS_READ_KEY` is empty
+(check `docker compose logs web`). Its nginx proxy forwards the raw, still-encoded path to the API,
+like the Vite dev proxy does, so remote names containing `/` (sent as `%2F`) open correctly.
 
 ## Tests
 
-43 API tests (Vitest, against a real Postgres via `app.inject()`, no network):
+128 API tests (Vitest, against a real Postgres via `app.inject()`, no network):
 validation (11 bad-payload cases, malformed JSON, prototype pollution), auth (missing, malformed,
 unknown, revoked, wrong-scope keys), payload size, per-key rate limiting, rejection-log
 flood cap, and every query endpoint (24h window, per-game isolation, rule filter, cursor paging
 with no gaps or duplicates).
+
+The Players and Remotes endpoints add: events just inside vs just outside each window (1h, 24h, 7d),
+bucket edges, every sort, name/ID search (renamed players, literal `%` and `_`), the offset and row
+caps, URL-encoded remote names, 404 without a rejection log, strict validation of every param, 403/401
+for ingest or missing keys, the violations `playerId`/`remote` filters combined with `rule` and
+cursor paging, and the read-only snapshot that keeps a response's numbers consistent while ingest runs.
 
 ## Metrics
 

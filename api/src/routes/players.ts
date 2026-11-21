@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { Db } from "../db/pool.js";
+import { withSnapshot, type Db } from "../db/pool.js";
 import type { TokenBucket } from "../lib/tokenBucket.js";
 import { validate } from "../lib/validate.js";
 import { timeWindow } from "../lib/windows.js";
@@ -24,7 +24,8 @@ export function playersRoutes(db: Db, bucket: TokenBucket) {
     app.get("/v1/players/:playerId", async (request, reply) => {
       const { playerId } = validate(PlayerParams, request.params);
       const { window } = validate(WindowQuery, request.query);
-      const detail = await getPlayer(db, authed(request).gameId, playerId, timeWindow(window));
+      // One snapshot for all of the response's queries, so its totals, breakdowns and buckets agree.
+      const detail = await withSnapshot(db, (q) => getPlayer(q, authed(request).gameId, playerId, timeWindow(window)));
       // A plain 404, not a Rejection: asking about an unknown player is not a bad request.
       if (!detail) return reply.code(404).send({ error: "not_found", message: "no events for this player in this game" });
       return detail;

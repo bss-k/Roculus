@@ -2,7 +2,7 @@
   Remote queries for the Remotes screen and drawer. Every query is scoped to one game and to
   the requested time window (see lib/windows.ts).
 */
-import type { Db } from "../db/pool.js";
+import type { Querier } from "../db/pool.js";
 import type { TimeWindow } from "../lib/windows.js";
 import { bucketCounts, bucketCountsByRemote, type Bucket } from "./buckets.js";
 import type { Violation } from "./stats.js";
@@ -35,7 +35,7 @@ const ORDER_BY: Record<RemoteSort, string> = {
   uniquePlayers: `"uniquePlayers" DESC, total DESC, remote`,
 };
 
-export async function listRemotes(db: Db, gameId: string, w: TimeWindow, sort: RemoteSort): Promise<RemoteRow[]> {
+export async function listRemotes(db: Querier, gameId: string, w: TimeWindow, sort: RemoteSort): Promise<RemoteRow[]> {
   // 1. One row per remote. "mode" is the mode of its newest event, which is also its newest
   //    event overall (the window has no upper end), so the drawer always agrees with the list.
   const { rows } = await db.query(
@@ -101,7 +101,7 @@ export interface RemoteDetail {
 
 // null when the remote has never had an event in this game (the route answers 404).
 // A remote seen before, but not in this window, gets zeros (and its current mode).
-export async function getRemote(db: Db, gameId: string, remote: string, w: TimeWindow): Promise<RemoteDetail | null> {
+export async function getRemote(db: Querier, gameId: string, remote: string, w: TimeWindow): Promise<RemoteDetail | null> {
   const newest = await db.query<{ mode: Mode }>(
     `SELECT mode FROM events WHERE game_id = $1 AND remote = $2 ORDER BY occurred_at DESC, id DESC LIMIT 1`,
     [gameId, remote],

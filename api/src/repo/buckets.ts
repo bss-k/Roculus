@@ -7,7 +7,7 @@
     $p+1   bucket size       (seconds)
     $p+2   number of buckets
 */
-import type { Db } from "../db/pool.js";
+import type { Querier } from "../db/pool.js";
 import type { TimeWindow } from "../lib/windows.js";
 
 export function bucketParams(w: TimeWindow): [Date, number, number] {
@@ -45,7 +45,7 @@ export function toBucket(row: { start: Date; shadow: number; enforce: number }):
 // Per-bucket enforce/shadow counts for one player's or one remote's events in the window.
 // The filter column is picked here from a fixed pair, never from input.
 export async function bucketCounts(
-  db: Db,
+  db: Querier,
   gameId: string,
   w: TimeWindow,
   filter: { playerId: number } | { remote: string },
@@ -72,7 +72,7 @@ export async function bucketCounts(
 // The same counts for several remotes at once (sparklines on the Remotes list). Every remote is
 // crossed with every bucket before the counts are joined on, so quiet buckets come back as 0.
 export async function bucketCountsByRemote(
-  db: Db,
+  db: Querier,
   gameId: string,
   w: TimeWindow,
   remotes: string[],

@@ -40,7 +40,9 @@ services:
       context: .
       dockerfile: web/Dockerfile
     environment:
-      OCULUS_READ_KEY: ${OCULUS_READ_KEY:?set OCULUS_READ_KEY in .env}
+      # Not `:?` here: compose checks that for every service, even ones whose profile is off.
+      # The web container refuses to start without a key instead (web/require-read-key.sh).
+      OCULUS_READ_KEY: ${OCULUS_READ_KEY:-}
     ports:
       - "8080:80"
     depends_on:

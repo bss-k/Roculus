@@ -5,8 +5,10 @@
 
   Shape of the fake traffic:
     - steady background noise: laggy players tripping rate limits, old clients failing schemas
-    - a few "exploiters" who hammer one or two remotes in short, dense bursts
-    - ~25% of remotes in enforce mode, the rest in shadow (as during a real rollout)
+    - 4 "exploiters" who come back several times a day, hammering Attack in short, dense
+      bursts (so Attack is the clear top remote); two of them also hit BuyItem
+    - ~25% of remotes in enforce mode, the rest in shadow (as during a real rollout), so
+      Attack's abuse is blocked while BuyItem's is only logged
 */
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -65,6 +67,9 @@ const PLAYERS = Array.from({ length: 80 }, (_, i) => ({
   name: `${pick(["Noob", "Pro", "Shadow", "Pixel", "Turbo", "Blox", "Cyber", "Lucky"])}${pick(["Ninja", "Gamer", "Knight", "Fox", "Wizard"])}${i}`,
 }));
 
+// Fixed picks (not random) so it's always the same 4 players; they also appear in the noise.
+const EXPLOITERS = [PLAYERS[7]!, PLAYERS[23]!, PLAYERS[41]!, PLAYERS[66]!];
+
 function event(timestamp: number, player: (typeof PLAYERS)[number], remote: Remote, rule: string, serverId: string): ViolationEvent {
   return {
     timestamp: Math.round(timestamp),
@@ -91,19 +96,23 @@ function generate(now: number): ViolationEvent[] {
     events.push(event(t, pick(PLAYERS), pick(REMOTE_NAMES), rule, pick(SERVERS)));
   }
 
-  // Exploiter bursts: one player spamming a couple of remotes for a few minutes.
-  for (let b = 0; b < 7; b++) {
-    const exploiter = pick(PLAYERS);
-    const server = pick(SERVERS);
-    const targets: Remote[] = [pick(["Attack", "BuyItem", "Trade"] as const), pick(REMOTE_NAMES)];
-    const burstStart = start + rand() * (now - start - 10 * 60_000);
-    const size = 60 + Math.floor(rand() * 140);
-    for (let i = 0; i < size; i++) {
-      const rule = rand() < 0.7 ? "RateLimit" : "Schema";
-      events.push(event(burstStart + rand() * 8 * 60_000, exploiter, pick(targets), rule, server));
+  // Exploiters: the same few players coming back for several bursts across the day, each burst
+  // a few minutes of spam, mostly at Attack. Two of them also probe BuyItem (still in shadow).
+  EXPLOITERS.forEach((exploiter, n) => {
+    const secondary: Remote = n < 2 ? "BuyItem" : "UseAbility";
+    const bursts = 3 + Math.floor(rand() * 2);
+    for (let b = 0; b < bursts; b++) {
+      const server = pick(SERVERS);
+      const burstStart = start + rand() * (now - start - 10 * 60_000);
+      const size = 50 + Math.floor(rand() * 70);
+      for (let i = 0; i < size; i++) {
+        const rule = rand() < 0.7 ? "RateLimit" : "Schema";
+        const remote = rand() < 0.75 ? "Attack" : secondary;
+        events.push(event(burstStart + rand() * 6 * 60_000, exploiter, remote, rule, server));
+      }
+      if (rand() < 0.5) events.push(event(burstStart, exploiter, "Attack", "GlobalRateLimit", server));
     }
-    if (rand() < 0.5) events.push(event(burstStart, exploiter, targets[0]!, "GlobalRateLimit", server));
-  }
+  });
 
   return events.sort((a, b) => a.timestamp - b.timestamp);
 }
@@ -140,6 +149,11 @@ try {
   await writeFile(envPath, `# Written by npm run seed. Dev-only read key used by the Vite proxy.\nOCULUS_READ_KEY=${readKey}\n`);
 
   console.log(`seeded ${events.length} events for "Demo Game"`);
+  const countFor = (match: (e: ViolationEvent) => boolean) => events.filter(match).length;
+  console.log(
+    `exploiters: ${EXPLOITERS.map((p) => `${p.name} (${countFor((e) => e.playerId === p.id)})`).join(", ")}`,
+  );
+  console.log(`Attack: ${countFor((e) => e.remote === "Attack")} events`);
   console.log(`read key written to web/.env.local`);
   console.log(`ingest key (for manual curl tests): ${ingestKey}`);
 } finally {

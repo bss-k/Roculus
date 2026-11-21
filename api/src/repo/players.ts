@@ -2,7 +2,7 @@
   Player queries for the Players screen and drawer. Every query is scoped to one game and to
   the requested time window (see lib/windows.ts).
 */
-import type { Db } from "../db/pool.js";
+import type { Querier } from "../db/pool.js";
 import type { TimeWindow } from "../lib/windows.js";
 import { bucketCounts, type Bucket } from "./buckets.js";
 
@@ -42,7 +42,7 @@ function parseSearch(q: string | undefined): { playerId: number | null; namePref
   change between requests anyway. The offset cap (schemas/queries.ts) bounds the cost.
 */
 export async function listPlayers(
-  db: Db,
+  db: Querier,
   gameId: string,
   w: TimeWindow,
   opts: { sort: PlayerSort; q?: string; limit: number; offset: number },
@@ -96,7 +96,7 @@ export interface PlayerDetail {
 
 // null when the player has never had an event in this game (the route answers 404).
 // A player seen before, but not in this window, gets zeros.
-export async function getPlayer(db: Db, gameId: string, playerId: number, w: TimeWindow): Promise<PlayerDetail | null> {
+export async function getPlayer(db: Querier, gameId: string, playerId: number, w: TimeWindow): Promise<PlayerDetail | null> {
   const latest = await db.query<{ playerName: string }>(
     `SELECT player_name AS "playerName" FROM events
      WHERE game_id = $1 AND player_id = $2

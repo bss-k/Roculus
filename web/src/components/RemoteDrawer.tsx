@@ -27,7 +27,9 @@ interface RemoteDrawerProps {
 export function RemoteDrawer({ remote, initialWindow, onClose, onOpenPlayer }: RemoteDrawerProps) {
   const [windowId, setWindowId] = useState<WindowId>(initialWindow);
   const detail = usePolling((signal) => api.remote(remote, windowId, signal), 0, `${remote}|${windowId}`);
-  const d = detail.data;
+  // After a window switch, the previous window's numbers would sit under the new labels: show
+  // skeletons until this window's data arrives instead.
+  const d = detail.stale ? undefined : detail.data;
   const r = d?.remote;
   const updating = detail.loading && d !== undefined;
   const nothing = `Nothing in the ${windowLong(windowId)}.`;

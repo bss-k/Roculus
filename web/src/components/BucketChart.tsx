@@ -35,7 +35,8 @@ export function BucketChart({ buckets, tickEvery, formatTick, formatReadout, ari
   const slot = PLOT_W / buckets.length;
   const barW = slot * 0.7;
   const y = (v: number) => PAD.top + PLOT_H - (v / max) * PLOT_H;
-  const ticks = [0, max / 2, max];
+  // A middle gridline only where it lands on a whole number (no "2.5 violations").
+  const ticks = Number.isInteger(max / 2) ? [0, max / 2, max] : [0, max];
   const active = hovered === null ? null : buckets[hovered];
 
   return (

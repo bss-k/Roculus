@@ -12,5 +12,6 @@ RUN npm run build -w web
 # Static files served by nginx. The template is rendered at startup with OCULUS_READ_KEY,
 # so the read key stays on the server and never appears in the JS bundle.
 FROM nginx:1.27-alpine
+COPY --chmod=755 web/require-read-key.sh /docker-entrypoint.d/05-require-read-key.sh
 COPY web/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/web/dist /usr/share/nginx/html
