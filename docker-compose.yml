@@ -1,0 +1,51 @@
+# Local dev:  docker compose up -d db
+# Deploy:     docker compose --profile deploy up -d --build   (reads .env)
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: oculus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oculus}
+      POSTGRES_DB: oculus
+    ports:
+      - "127.0.0.1:5432:5432" # loopback only: the database is never exposed publicly
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./api/test/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oculus"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    profiles: ["deploy"]
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      DATABASE_URL: postgres://oculus:${POSTGRES_PASSWORD:-oculus}@db:5432/oculus
+      HOST: 0.0.0.0
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    profiles: ["deploy"]
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    environment:
+      OCULUS_READ_KEY: ${OCULUS_READ_KEY:?set OCULUS_READ_KEY in .env}
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
