@@ -133,6 +133,7 @@ td.detail { max-width: 360px; color: var(--muted); }
 .drawer-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 20px 14px; background: var(--bg); border-bottom: 1px solid var(--border); }
 .drawer-title { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .drawer-title h2 { font-size: 18px; letter-spacing: 0; text-transform: none; color: var(--text); overflow-wrap: anywhere; }
+.drawer-title h2 .mono { font-size: inherit; }
 .drawer-close { background: none; border: 1px solid var(--border); color: var(--muted); width: 32px; height: 32px; border-radius: 8px; font: inherit; cursor: pointer; flex-shrink: 0; }
 .drawer-close:hover { color: var(--text); border-color: var(--muted); }
 .drawer-body { padding: 16px 20px 32px; display: flex; flex-direction: column; gap: 14px; }
@@ -140,6 +141,32 @@ td.detail { max-width: 360px; color: var(--muted); }
 @keyframes slide-in { from { transform: translateX(24px); opacity: 0; } }
 @keyframes fade-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .drawer, .drawer-backdrop { animation: none; } }
+
+/* Players / Remotes tables */
+.search { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font: inherit; width: 190px; }
+.search:focus-visible, select:focus-visible, .link-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.num-enforce { color: var(--red); }
+.num-shadow { color: var(--amber); }
+.row-link { cursor: pointer; }
+.link-button { background: none; border: 0; padding: 0; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; text-align: left; border-radius: 4px; }
+.link-button:hover { color: var(--blue); }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: 11.5px; font-weight: 600; color: var(--blue); background: rgba(60, 170, 255, 0.12); padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+.is-updating { opacity: 0.55; transition: opacity 0.2s; }
+.chip-count { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+/* Wide enough for typical names on one line; very long ones (up to 100 chars) still wrap. */
+td.remote-name { min-width: 140px; max-width: 240px; overflow-wrap: anywhere; }
+.drawer-subtitle { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.error-text { color: var(--red); font-size: 12.5px; }
+
+/* Drawer contents */
+.drawer-toolbar { display: flex; align-items: center; gap: 12px; }
+.drawer .kpi { padding: 12px 14px; }
+.drawer .kpi-value { font-size: 24px; }
+.drawer .kpi-label { font-size: 11px; }
+.drawer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 640px) { .drawer-grid { grid-template-columns: 1fr; } }
 
 /* Timeline (a compact feed with absolute times) */
 .timeline time { font-variant-numeric: tabular-nums; }

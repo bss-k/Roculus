@@ -1,8 +1,15 @@
 import { useState } from "react";
 import { Overview } from "./pages/Overview";
+import { Players } from "./pages/Players";
+import { Remotes } from "./pages/Remotes";
 import { Violations } from "./pages/Violations";
 
-const PAGES = { overview: { label: "Overview", Component: Overview }, violations: { label: "Violations", Component: Violations } };
+const PAGES = {
+  overview: { label: "Overview", Component: Overview },
+  violations: { label: "Violations", Component: Violations },
+  players: { label: "Players", Component: Players },
+  remotes: { label: "Remotes", Component: Remotes },
+};
 type PageId = keyof typeof PAGES;
 
 export function App() {
