@@ -36,21 +36,47 @@ const ORDER_BY: Record<RemoteSort, string> = {
 };
 
 export async function listRemotes(db: Querier, gameId: string, w: TimeWindow, sort: RemoteSort): Promise<RemoteRow[]> {
-  // 1. One row per remote. "mode" is the mode of its newest event, which is also its newest
-  //    event overall (the window has no upper end), so the drawer always agrees with the list.
+  /*
+    1. One row per remote. Written so Postgres can hash instead of sort: count(DISTINCT player_id)
+       or array_agg(... ORDER BY) would make it sort every event in the window by remote first
+       (over 1s, spilling to disk, at 1M events).
+       - per_player collapses the window to one row per (remote, player) in a single hashed pass;
+         per_remote then sums those, and its row count per remote is the unique player count.
+       - "mode" is the mode of the remote's newest event, read from the (game_id, remote,
+         occurred_at DESC) index: one row per remote. That's also its newest event in the window
+         (the window has no upper end), and it's how the drawer reads it, so the two always agree.
+  */
   const { rows } = await db.query(
-    `SELECT remote,
-            count(*)                                                AS total,
-            count(*) FILTER (WHERE mode = 'enforce')                AS enforced,
-            count(*) FILTER (WHERE mode = 'shadow')                 AS shadowed,
-            count(DISTINCT player_id)                               AS "uniquePlayers",
-            max(occurred_at)                                        AS "lastSeen",
-            (array_agg(mode ORDER BY occurred_at DESC, id DESC))[1] AS mode
-     FROM events
-     WHERE game_id = $1 AND occurred_at >= $2
-     GROUP BY remote
-     ORDER BY ${ORDER_BY[sort]}
-     LIMIT $3`,
+    `WITH per_player AS (
+       SELECT remote, player_id,
+              count(*)                                 AS total,
+              count(*) FILTER (WHERE mode = 'enforce') AS enforced,
+              count(*) FILTER (WHERE mode = 'shadow')  AS shadowed,
+              max(occurred_at)                         AS last_seen
+       FROM events
+       WHERE game_id = $1 AND occurred_at >= $2
+       GROUP BY remote, player_id
+     ), per_remote AS (
+       SELECT remote,
+              sum(total)::bigint    AS total,
+              sum(enforced)::bigint AS enforced,
+              sum(shadowed)::bigint AS shadowed,
+              count(*)              AS "uniquePlayers",
+              max(last_seen)        AS "lastSeen"
+       FROM per_player
+       GROUP BY remote
+       ORDER BY ${ORDER_BY[sort]}
+       LIMIT $3
+     )
+     SELECT r.*, newest.mode
+     FROM per_remote r
+     CROSS JOIN LATERAL (
+       SELECT mode FROM events
+       WHERE game_id = $1 AND remote = r.remote
+       ORDER BY occurred_at DESC, id DESC
+       LIMIT 1
+     ) newest
+     ORDER BY ${ORDER_BY[sort]}`,
     [gameId, w.start, MAX_REMOTES],
   );
   if (rows.length === 0) return [];

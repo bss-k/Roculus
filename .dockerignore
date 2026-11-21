@@ -1,0 +1,10 @@
+# Keep the image builds to source files: host node_modules are built for this machine's OS,
+# and .env files hold keys that must never end up in an image layer.
+**/node_modules
+**/dist
+**/coverage
+**/.env
+**/.env.*
+.git
+*.log
+.DS_Store

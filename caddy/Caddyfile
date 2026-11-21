@@ -1,0 +1,17 @@
+# The deploy's only public entry point: HTTPS for everything. Caddy gets and renews the
+# certificate from Let's Encrypt (or uses its own local CA when OCULUS_DOMAIN is localhost).
+{$OCULUS_DOMAIN} {
+	# Game servers and other API clients. Every /v1 endpoint checks its own API key.
+	handle /v1/* {
+		reverse_proxy api:3000
+	}
+
+	# The dashboard is for people, so it gets a login. The browser resends these credentials
+	# with every /dash/v1 call, and nginx behind this adds the read key for the API.
+	handle {
+		basic_auth {
+			{$DASHBOARD_USER} {$DASHBOARD_PASSWORD_HASH}
+		}
+		reverse_proxy web:80
+	}
+}

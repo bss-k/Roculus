@@ -27,8 +27,10 @@ export function bucketSql(p: number) {
     // Only meaningful for rows already filtered to occurred_at >= start. The newest bucket is
     // open-ended, so events slightly in the future (allowed clock skew) still land in a bar.
     // `column` must be a column name written in our own SQL, never user input.
+    // date_part, not extract: since Postgres 14 extract returns numeric, which is far slower to
+    // divide than date_part's double (about 30% of a 1M-row sparkline query). Same bucket numbers.
     bucketOf: (column: string) =>
-      `LEAST(floor(extract(epoch FROM ${column} - ${start}) / ${size})::int, ${count} - 1)`,
+      `LEAST(floor(date_part('epoch', ${column} - ${start}) / ${size})::int, ${count} - 1)`,
   };
 }
 

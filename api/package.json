@@ -10,6 +10,7 @@
     "migrate": "tsx src/bin/migrate.ts",
     "create-key": "tsx src/bin/create-key.ts",
     "seed": "tsx scripts/seed.ts",
+    "loadtest": "tsx scripts/loadtest.ts",
     "test": "vitest run"
   },
   "devDependencies": {

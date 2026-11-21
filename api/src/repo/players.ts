@@ -37,9 +37,20 @@ function parseSearch(q: string | undefined): { playerId: number | null; namePref
 }
 
 /*
-  One row per player, via GROUP BY player_id. Offset paging, not keyset: the sort keys are
-  aggregates computed by this query, so no index can seek to "after the last row", and they
-  change between requests anyway. The offset cap (schemas/queries.ts) bounds the cost.
+  One row per player. Offset paging, not keyset: the sort keys are aggregates computed by this
+  query, so no index can seek to "after the last row", and they change between requests anyway.
+  The offset cap (schemas/queries.ts) bounds the cost.
+
+  Two queries, both on the caller's snapshot (see withSnapshot), so they agree:
+    1. The page. Every player in the window has to be aggregated to sort them, so this pass uses
+       only aggregates Postgres can compute in one hashed pass (counts, min, max, bool_or).
+       The latest name, distinct rules and distinct remotes would each force a sort of every
+       event instead, and only the page's players need them.
+    2. Those details for just the page's players. Their events are first collapsed to distinct
+       (remote, rule) combinations, which is a cheap hash, so the DISTINCT aggregates then run
+       over a few hundred rows per player instead of every event.
+  (As one query with the page as a CTE, Postgres can't tell the page is small and plans step 2
+  for every player, which is slower.)
 */
 export async function listPlayers(
   db: Querier,
@@ -48,16 +59,13 @@ export async function listPlayers(
   opts: { sort: PlayerSort; q?: string; limit: number; offset: number },
 ): Promise<{ items: PlayerRow[]; hasMore: boolean }> {
   const search = parseSearch(opts.q);
-  const { rows } = await db.query(
-    `SELECT player_id                                                      AS "playerId",
-            (array_agg(player_name ORDER BY occurred_at DESC, id DESC))[1] AS "playerName",
-            count(*)                                                       AS total,
-            count(*) FILTER (WHERE mode = 'enforce')                       AS enforced,
-            count(*) FILTER (WHERE mode = 'shadow')                        AS shadowed,
-            array_agg(DISTINCT rule ORDER BY rule)                         AS rules,
-            count(DISTINCT remote)                                         AS remotes,
-            min(occurred_at)                                               AS "firstSeen",
-            max(occurred_at)                                               AS "lastSeen"
+  const page = await db.query(
+    `SELECT player_id                                AS "playerId",
+            count(*)                                 AS total,
+            count(*) FILTER (WHERE mode = 'enforce') AS enforced,
+            count(*) FILTER (WHERE mode = 'shadow')  AS shadowed,
+            min(occurred_at)                         AS "firstSeen",
+            max(occurred_at)                         AS "lastSeen"
      FROM events
      WHERE game_id = $1 AND occurred_at >= $2
        AND ($3::bigint IS NULL OR player_id = $3)
@@ -70,12 +78,48 @@ export async function listPlayers(
     [gameId, w.start, search.playerId, search.namePrefix, opts.limit + 1, opts.offset],
   );
   // One extra row tells us whether another page exists, without a COUNT query.
-  const items: PlayerRow[] = rows.slice(0, opts.limit).map((r) => ({
-    ...r,
-    firstSeen: r.firstSeen.toISOString(),
-    lastSeen: r.lastSeen.toISOString(),
-  }));
-  return { items, hasMore: rows.length > opts.limit };
+  const hasMore = page.rows.length > opts.limit;
+  const rows = page.rows.slice(0, opts.limit);
+  if (rows.length === 0) return { items: [], hasMore };
+
+  const details = await db.query<{ playerId: number; playerName: string; rules: string[]; remotes: number }>(
+    `SELECT c.player_id AS "playerId", latest.player_name AS "playerName", c.rules, c.remotes
+     FROM (
+       SELECT player_id, array_agg(DISTINCT rule ORDER BY rule) AS rules, count(DISTINCT remote) AS remotes
+       FROM (
+         SELECT player_id, remote, rule FROM events
+         WHERE game_id = $1 AND occurred_at >= $2 AND player_id = ANY($3::bigint[])
+         GROUP BY player_id, remote, rule
+       ) combos
+       GROUP BY player_id
+     ) c
+     -- The name of their newest event in the window, read from the (game_id, player_id,
+     -- occurred_at DESC) index.
+     CROSS JOIN LATERAL (
+       SELECT player_name FROM events
+       WHERE game_id = $1 AND player_id = c.player_id AND occurred_at >= $2
+       ORDER BY occurred_at DESC, id DESC
+       LIMIT 1
+     ) latest`,
+    [gameId, w.start, rows.map((r) => r.playerId)],
+  );
+  const byId = new Map(details.rows.map((d) => [d.playerId, d]));
+
+  const items: PlayerRow[] = rows.map((r) => {
+    const d = byId.get(r.playerId)!;
+    return {
+      playerId: r.playerId,
+      playerName: d.playerName,
+      total: r.total,
+      enforced: r.enforced,
+      shadowed: r.shadowed,
+      rules: d.rules,
+      remotes: d.remotes,
+      firstSeen: r.firstSeen.toISOString(),
+      lastSeen: r.lastSeen.toISOString(),
+    };
+  });
+  return { items, hasMore };
 }
 
 export interface PlayerDetail {

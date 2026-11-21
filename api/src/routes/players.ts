@@ -15,7 +15,10 @@ export function playersRoutes(db: Db, bucket: TokenBucket) {
 
     app.get("/v1/players", async (request) => {
       const { window, ...opts } = validate(PlayersQuery, request.query);
-      const { items, hasMore } = await listPlayers(db, authed(request).gameId, timeWindow(window), opts);
+      // One snapshot for the page and its details query, so a row's rules match its counts.
+      const { items, hasMore } = await withSnapshot(db, (q) =>
+        listPlayers(q, authed(request).gameId, timeWindow(window), opts),
+      );
       // Never hand out an offset the schema would refuse.
       const next = opts.offset + opts.limit;
       return { items, nextOffset: hasMore && next <= MAX_PLAYERS_OFFSET ? next : null };

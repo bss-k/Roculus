@@ -16,17 +16,20 @@ flowchart LR
     SS[("Secrets Store<br/>ingest key")] -. Authorization header .-> OC
   end
 
-  OC -- "POST /v1/events<br/>Bearer ingest key · ≤100 events" --> API
+  OC -- "HTTPS POST /v1/events<br/>Bearer ingest key · ≤100 events" --> CADDY
 
   subgraph Server["Oracle Cloud VM (Docker Compose)"]
+    CADDY["Caddy · the only public ports<br/>TLS · dashboard login"]
     API["API · Fastify + Zod<br/>auth → rate limit → size → schema"]
     DB[("Postgres<br/>games · api_keys · events<br/>rejected_requests")]
     WEB["nginx<br/>static dashboard + /dash proxy"]
+    CADDY -- "/v1/*" --> API
+    CADDY -- "everything else, after login" --> WEB
     API --> DB
     WEB -- "GET /v1/* + read key" --> API
   end
 
-  Browser["Dashboard (React)"] -- "GET /dash/v1/* (no key)" --> WEB
+  Browser["Dashboard (React)"] -- "HTTPS GET /dash/v1/* (login, no key)" --> CADDY
 ```
 
 Request lifecycle for every endpoint:
@@ -42,7 +45,8 @@ any refusal → one rejected_requests row (reason, key if known, ip, route, deta
 
 | Folder | What's in it |
 | --- | --- |
-| `api/` | Node + TypeScript + Fastify API, SQL migrations, key and seed scripts, Vitest tests |
+| `api/` | Node + TypeScript + Fastify API, SQL migrations, key, seed and load-test scripts, Vitest tests |
+| `caddy/` | Deploy entry point: HTTPS and the dashboard login |
 | `web/` | React + TypeScript + Vite dashboard (Overview, Violations, Players, Remotes) |
 | `roblox/` | `OculusClient.luau`, the server-side module that ships events |
 
@@ -66,6 +70,10 @@ but the API is on the public internet, so anyone can try. Each defense covers on
 
 | Threat | Defense | Where |
 | --- | --- | --- |
+| Keys or dashboard data read off the network | HTTPS for everything via Caddy (automatic Let's Encrypt certificates, HTTP redirects to HTTPS) | `caddy/Caddyfile` |
+| Strangers open the dashboard | Login (HTTP basic auth over HTTPS) on every dashboard page and `/dash` call; the password is hashed at startup | `caddy/Caddyfile`, `caddy/start.sh` |
+| Someone skips Caddy and talks to the API or nginx directly | Only Caddy publishes ports; the API, nginx and Postgres are reachable only inside the compose network | `docker-compose.yml` |
+| A client fakes its IP in `X-Forwarded-For` to dodge the rejection-log cap | Caddy replaces the header with the real client IP; the API trusts it only because nothing else can reach the API | `docker-compose.yml` (`TRUST_PROXY`) |
 | Someone posts fake events or reads another game's data | Per-game API key in `Authorization: Bearer`; every query is scoped to the key's game | `plugins/guards.ts`, `repo/` |
 | Database leak exposes working keys | Keys stored as SHA-256 hashes only; the raw key is printed once at creation | `lib/keys.ts`, `bin/create-key.ts` |
 | Dashboard credentials let someone post events | Separate `read` and `ingest` key scopes; wrong scope → 403 | `api_keys.scope` |
@@ -82,12 +90,15 @@ but the API is on the public internet, so anyone can try. Each defense covers on
 **Why no HMAC request signing:** Roblox Secrets can only be placed in URLs or headers, never
 used to compute a signature over the body, so the key is sent as a bearer token.
 
-**Known limits (Milestone 1):**
-- TLS is not set up yet. Put a TLS-terminating proxy (e.g. Caddy) in front of the API before
-  sending real keys over the internet.
-- The dashboard has no user login. Restrict who can reach it (VM firewall, VPN).
+**Known limits:**
+- The dashboard login is one shared username and password, not per-person accounts, and
+  failed logins aren't rate limited (each guess costs a bcrypt check). Use a long random password.
 - Rate limits are kept in memory, so they're per instance. That's correct for one VM, but
   would need Redis or similar if the API ever runs on several instances.
+- The Players and Remotes lists aggregate every event in the window on each request, so they get
+  slower as volume grows. The queries are written so Postgres can hash rather than sort (see the
+  comments in `repo/players.ts` and `repo/remotes.ts`), but beyond a few million events per window
+  they'd need counts maintained as events arrive. `npm run loadtest` measures this on your own setup.
 
 ## API
 
@@ -144,15 +155,32 @@ events (with one warning per interval).
 
 ## Deploy (Oracle Cloud VM)
 
+1. Point a DNS name at the VM (any provider; a free dynamic-DNS name works), and allow inbound
+   TCP 80 and 443 (plus UDP 443 for HTTP/3) in both the VCN security list and the VM's own firewall.
+2. Configure and start:
+
 ```bash
-cp .env.example .env    # set POSTGRES_PASSWORD and OCULUS_READ_KEY
+cp .env.example .env    # set POSTGRES_PASSWORD, OCULUS_DOMAIN, DASHBOARD_USER, DASHBOARD_PASSWORD
 docker compose --profile deploy up -d --build
 ```
 
-The API listens on `:3000` (applies migrations on start), the dashboard on `:8080`, and Postgres
-is bound to localhost only. The dashboard container refuses to start if `OCULUS_READ_KEY` is empty
-(check `docker compose logs web`). Its nginx proxy forwards the raw, still-encoded path to the API,
-like the Vite dev proxy does, so remote names containing `/` (sent as `%2F`) open correctly.
+3. Create the keys inside the API container (it already has the database settings), put the read
+   key in `.env` as `OCULUS_READ_KEY`, and run the `up` command again to restart the dashboard with it:
+
+```bash
+docker compose --profile deploy exec api node dist/bin/create-key.js --game "My Game" --universe <universeId> --scope read
+docker compose --profile deploy exec api node dist/bin/create-key.js --game "My Game" --universe <universeId> --scope ingest
+```
+
+The dashboard is then at `https://<OCULUS_DOMAIN>/` (behind the login) and game servers post to
+`https://<OCULUS_DOMAIN>/v1/events`. Caddy is the only service with public ports: it gets the
+certificate on first start (keep the `caddy_data` volume, or every restart asks Let's Encrypt
+again). The API applies migrations on start, and Postgres is bound to localhost only.
+
+Caddy and the dashboard each refuse to start if their settings are missing (`docker compose logs
+caddy web` says which one). Until the read key is set, the dashboard container keeps restarting;
+that's expected. The dashboard's nginx proxy forwards the raw, still-encoded path to the API, like
+the Vite dev proxy does, so remote names containing `/` (sent as `%2F`) open correctly.
 
 ## Tests
 
@@ -171,7 +199,12 @@ cursor paging, and the read-only snapshot that keeps a response's numbers consis
 ## Metrics
 
 Not measured yet. Fill these in from real usage, not the seed:
-- **Ingest throughput and p95 latency.** Load-test `POST /v1/events` with 100-event batches (e.g. `autocannon`).
+- **Ingest throughput and p95 latency.** `npm run loadtest -w api -- ingest --url <base>`, with
+  `OCULUS_INGEST_KEY` set to a key for a throwaway game. It posts 100-event batches from 10 workers
+  for 20s, and prints accepted events/s, p50/p95/p99, and every status seen. Normal rate limits cap a
+  key at 60 batches/min, so to measure the server, run an instance with higher `INGEST_*` limits.
+- **Dashboard query time at volume.** After an ingest run, `npm run loadtest -w api -- reads --url <base>`
+  (with `OCULUS_READ_KEY`) times every dashboard endpoint at that data size. Use `EXPLAIN ANALYZE`
+  on whichever is slow.
 - **Events per day and rejected-request mix.** `SELECT reason, count(*) FROM rejected_requests GROUP BY reason`.
 - **Client drop rate.** Count `[Oculus] dropped` warnings in live server logs.
-- **Query time on the dashboard endpoints** at your real data volume (`EXPLAIN ANALYZE`).

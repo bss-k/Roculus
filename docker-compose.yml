@@ -1,5 +1,8 @@
 # Local dev:  docker compose up -d db
 # Deploy:     docker compose --profile deploy up -d --build   (reads .env)
+#
+# In the deploy, Caddy is the only service with public ports. The API and the dashboard are
+# reachable only through it, inside the compose network.
 services:
   db:
     image: postgres:16-alpine
@@ -27,8 +30,9 @@ services:
       DATABASE_URL: postgres://oculus:${POSTGRES_PASSWORD:-oculus}@db:5432/oculus
       HOST: 0.0.0.0
       PORT: 3000
-    ports:
-      - "3000:3000"
+      # Requests arrive through Caddy (and nginx, for the dashboard), so the client's IP is in
+      # X-Forwarded-For. Trusting it is safe only because the API has no published port.
+      TRUST_PROXY: "true"
     depends_on:
       db:
         condition: service_healthy
@@ -43,11 +47,34 @@ services:
       # Not `:?` here: compose checks that for every service, even ones whose profile is off.
       # The web container refuses to start without a key instead (web/require-read-key.sh).
       OCULUS_READ_KEY: ${OCULUS_READ_KEY:-}
-    ports:
-      - "8080:80"
     depends_on:
       - api
     restart: unless-stopped
 
+  caddy:
+    profiles: ["deploy"]
+    image: caddy:2.11-alpine
+    # Checks the settings below and hashes the dashboard password before starting Caddy.
+    entrypoint: ["/bin/sh", "/etc/caddy/start.sh"]
+    environment:
+      OCULUS_DOMAIN: ${OCULUS_DOMAIN:-}
+      DASHBOARD_USER: ${DASHBOARD_USER:-}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+    ports:
+      - "80:80" # certificate challenges, and redirects to HTTPS
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/start.sh:/etc/caddy/start.sh:ro
+      - caddy_data:/data # certificates: keep them, or every restart asks Let's Encrypt again
+      - caddy_config:/config
+    depends_on:
+      - api
+      - web
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:
