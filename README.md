@@ -19,36 +19,42 @@ flowchart LR
   OC -- "HTTPS POST /v1/events<br/>Bearer ingest key · ≤100 events" --> CADDY
 
   subgraph Server["Oracle Cloud VM (Docker Compose)"]
-    CADDY["Caddy · the only public ports<br/>TLS · dashboard login"]
+    CADDY["Caddy · the only public ports<br/>TLS · security headers · 128 KiB cap<br/>dashboard login (basic auth)"]
     API["API · Fastify + Zod<br/>auth → rate limit → size → schema"]
-    DB[("Postgres<br/>games · api_keys · events<br/>rejected_requests")]
-    WEB["nginx<br/>static dashboard + /dash proxy"]
+    DB[("Postgres (localhost only)<br/>games · api_keys · events<br/>rejected_requests · admin_audit")]
+    WEB["nginx<br/>static dashboard + /dash proxies"]
+    BK["backup<br/>nightly pg_dump -Fc · 7 days"]
     CADDY -- "/v1/*" --> API
     CADDY -- "everything else, after login" --> WEB
     API --> DB
-    WEB -- "GET /v1/* + read key" --> API
+    WEB -- "/dash/v1 → GET /v1/* + read key (added by nginx)" --> API
+    WEB -- "/dash/admin → /v1/admin/* + admin key (typed in, passed through)" --> API
+    BK -- pg_dump --> DB
   end
 
-  Browser["Dashboard (React)"] -- "HTTPS GET /dash/v1/* (login, no key)" --> CADDY
+  Browser["Dashboard (React)<br/>admin key in memory only"] -- "HTTPS (login)" --> CADDY
 ```
 
 Request lifecycle for every endpoint:
 
 ```
-onRequest:  requireKey(scope)  → 401/403 bad_key        (before the body is read)
-            rateLimit(key)     → 429 rate_limited
-parse:      bodyLimit 128 KB   → 413 too_large
-            JSON parser        → 400 invalid_schema     (malformed JSON, __proto__ keys)
-handler:    Zod strict schema  → 400 invalid_schema     (unknown fields, types, ranges)
+deploy only: Caddy            → TLS, 128 KiB body cap (413, not logged), login for non-/v1 paths
+onRequest:   requireKey(scope) → 401/403 bad_key        (before the body is read; 401 "expired" past a grace period)
+             rateLimit(key)    → 429 rate_limited       (separate buckets: ingest, read, admin)
+parse:       bodyLimit 128 KB  → 413 too_large
+             JSON parser       → 400 invalid_schema     (malformed JSON, __proto__ keys)
+handler:     Zod strict schema → 400 invalid_schema     (unknown fields, types, ranges)
 any refusal → one rejected_requests row (reason, key if known, ip, route, detail)
 ```
 
 | Folder | What's in it |
 | --- | --- |
 | `api/` | Node + TypeScript + Fastify API, SQL migrations, key, seed and load-test scripts, Vitest tests |
-| `caddy/` | Deploy entry point: HTTPS and the dashboard login |
-| `web/` | React + TypeScript + Vite dashboard (Overview, Violations, Players, Remotes) |
+| `web/` | React + TypeScript + Vite dashboard (Overview, Violations, Players, Remotes, Ingestion & keys) |
+| `caddy/` | Deploy entry point: HTTPS, security headers, the dashboard login |
+| `scripts/` | `dev.mjs`, `smoke.mjs` (end-to-end check of a deploy), `backup.sh`, `restore.sh` |
 | `roblox/` | `OculusClient.luau`, the server-side module that ships events |
+| `docs/` | [Deploying on Oracle Cloud](docs/deploy-oracle.md), [connecting a Roblox game](docs/roblox-integration.md) |
 
 ## Local setup
 
@@ -61,7 +67,8 @@ npm run setup             # migrations + ~2.2k demo events; writes a dev read ke
 npm run dev               # API on :3000, dashboard on http://localhost:5173
 ```
 
-Run the checks CI runs: `npm run lint`, `npm run typecheck`, `npm test`.
+`npm run setup` also prints a dev **admin key**: paste it into the Ingestion & keys screen to
+try key management. Run the checks CI runs: `npm run lint`, `npm run typecheck`, `npm test`.
 
 ## Threat model
 
@@ -70,31 +77,45 @@ but the API is on the public internet, so anyone can try. Each defense covers on
 
 | Threat | Defense | Where |
 | --- | --- | --- |
-| Keys or dashboard data read off the network | HTTPS for everything via Caddy (automatic Let's Encrypt certificates, HTTP redirects to HTTPS) | `caddy/Caddyfile` |
-| Strangers open the dashboard | Login (HTTP basic auth over HTTPS) on every dashboard page and `/dash` call; the password is hashed at startup | `caddy/Caddyfile`, `caddy/start.sh` |
-| Someone skips Caddy and talks to the API or nginx directly | Only Caddy publishes ports; the API, nginx and Postgres are reachable only inside the compose network | `docker-compose.yml` |
-| A client fakes its IP in `X-Forwarded-For` to dodge the rejection-log cap | Caddy replaces the header with the real client IP; the API trusts it only because nothing else can reach the API | `docker-compose.yml` (`TRUST_PROXY`) |
+| Keys or dashboard data read off the network | HTTPS for everything: Caddy terminates TLS with automatic Let's Encrypt certificates, redirects HTTP, and sends HSTS | `caddy/Caddyfile` |
+| Strangers open the dashboard | Login (HTTP basic auth over HTTPS) on every dashboard page and `/dash` call; only a bcrypt hash of the password is in `.env` | `caddy/Caddyfile`, `caddy/start.sh` |
+| The dashboard framed by another site, content-type sniffing, leaking URLs in `Referer` | `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`; no `Server` header | `caddy/Caddyfile` |
+| Someone skips Caddy and talks to the API or nginx directly | Only Caddy publishes ports; the API, nginx and Postgres are reachable only inside the compose network (Postgres also on the VM's loopback) | `docker-compose.yml` |
+| A client fakes its IP in `X-Forwarded-For` to dodge the rejection-log cap | Caddy replaces the header with the real client IP; the API trusts it (`TRUST_PROXY`) only because nothing else can reach the API | `docker-compose.yml` |
 | Someone posts fake events or reads another game's data | Per-game API key in `Authorization: Bearer`; every query is scoped to the key's game | `plugins/guards.ts`, `repo/` |
-| Database leak exposes working keys | Keys stored as SHA-256 hashes only; the raw key is printed once at creation | `lib/keys.ts`, `bin/create-key.ts` |
-| Dashboard credentials let someone post events | Separate `read` and `ingest` key scopes; wrong scope → 403 | `api_keys.scope` |
+| Database leak exposes working keys | Keys stored as SHA-256 hashes only; the raw key is shown once (CLI output or the rotate response, sent `Cache-Control: no-store`), never in any list or log | `lib/keys.ts`, `routes/admin.ts` |
+| Dashboard credentials let someone post events or manage keys | Three key scopes (`ingest`, `read`, `admin`); each endpoint accepts one, wrong scope → 403 | `api_keys.scope` |
 | Read key leaks from the browser | The browser never sees it: the Vite proxy (dev) or nginx (deploy) adds it server-side | `web/vite.config.ts`, `web/nginx.conf.template` |
-| A buggy or compromised server floods the API | Token bucket per key (ingest: 20 burst, 60/min) with `Retry-After` | `lib/tokenBucket.ts` |
-| Huge bodies exhaust memory | 128 KB body limit, max 100 events per batch | `server.ts`, `schemas/events.ts` |
+| Admin key leaks from the browser | Typed in by the person when needed, held in React state only (no storage, URL or cookie), cleared on Lock, leaving the screen or reload; the proxy passes it through and never stores or adds one | `KeysPanel.tsx`, `/dash/admin` proxies |
+| A leaked key keeps working | Rotation with a grace period (0–7 days): both keys work until the old one's `expires_at`, then it gets 401 "expired"; at most two usable keys per scope, enforced under a lock on the game's row; revoke is immediate | `repo/keys.ts` |
+| Key management locks everyone out | Admin keys can't be rotated or revoked from the dashboard, only replaced with the CLI; one admin key per game (unique index) | `routes/admin.ts`, migration 003 |
+| Key changes go unnoticed | Every rotation and revocation (dashboard or CLI) writes an `admin_audit` row in the same transaction | `repo/keys.ts` |
+| A buggy or compromised server floods the API | Token bucket per key (ingest: 20 burst, 60/min; admin: its own, smaller bucket) with `Retry-After` | `lib/tokenBucket.ts`, `server.ts` |
+| Huge bodies exhaust memory | 128 KiB cap at Caddy and in the API, max 100 events per batch | `caddy/Caddyfile`, `server.ts`, `schemas/events.ts` |
 | Malformed or malicious payloads (extra fields, wrong types, `__proto__`) | Strict Zod schemas (unknown fields rejected), length caps on every string, Fastify's prototype-poisoning check | `schemas/` |
 | Replayed or back-dated events skew charts | Timestamps must be within the last 24h and no more than 5 min in the future | `schemas/events.ts` |
 | Bad-key floods fill the `rejected_requests` table | Rejection logging is itself rate limited per (reason, IP) | `plugins/errorHandler.ts` |
 | Exploiter-controlled text (in violation details) breaks the client | The Luau client truncates every field to the API's limits and replaces invalid UTF-8 | `OculusClient.luau` |
 | SQL injection | Parameterized queries only; batches use `unnest()` with typed arrays | `repo/` |
-| Key stolen from a game place file | Key lives in the Roblox Secrets Store, never in scripts; rotate with `create-key` | `OculusClient.luau` |
+| Key stolen from a game place file | Key lives in the Roblox Secrets Store, never in scripts | `OculusClient.luau` |
+| Losing the VM loses the data | Nightly `pg_dump` with 7 days kept, a tested restore script, and a documented off-VM copy | `scripts/backup.sh`, `scripts/restore.sh` |
 
 **Why no HMAC request signing:** Roblox Secrets can only be placed in URLs or headers, never
 used to compute a signature over the body, so the key is sent as a bearer token.
 
+**Why the admin key isn't sent as `Authorization` by the browser:** on the deployed site that
+header already carries the dashboard login (basic auth), so the browser sends the admin key as
+`X-Oculus-Admin-Key` and the `/dash/admin` proxy turns it into `Authorization: Bearer` for the API.
+
 **Known limits:**
 - The dashboard login is one shared username and password, not per-person accounts, and
   failed logins aren't rate limited (each guess costs a bcrypt check). Use a long random password.
+- The admin key is typed into the browser. Script injection into the dashboard (none is known)
+  could read it while unlocked; lock the screen when you're done.
 - Rate limits are kept in memory, so they're per instance. That's correct for one VM, but
   would need Redis or similar if the API ever runs on several instances.
+- Bodies over 128 KiB are refused by Caddy, so they don't appear in `rejected_requests`.
+- Backups are written to the same VM; copying them elsewhere is a manual step (see the deploy guide).
 - The Players and Remotes lists aggregate every event in the window on each request, so they get
   slower as volume grows. The queries are written so Postgres can hash rather than sort (see the
   comments in `repo/players.ts` and `repo/remotes.ts`), but beyond a few million events per window
@@ -115,6 +136,12 @@ All endpoints need `Authorization: Bearer <key>`. Every refusal returns `{ "erro
 | GET | `/v1/players/:playerId?window=24h` | read | summary, `byRule`, `byRemote`, distinct servers, time `buckets`; 404 if the player has no events in this game |
 | GET | `/v1/remotes?window=24h&sort=total` | read | one row per remote (up to 200): totals, unique players, `byRule`, last seen, current `mode` (of its newest event), time `buckets` for a sparkline. `sort`: `total`, `enforced`, `uniquePlayers` |
 | GET | `/v1/remotes/:remote?window=24h` | read | summary, `byRule`, top 10 players, time `buckets`; 404 if the remote has no events in this game. URL-encode the name (≤ 100 chars) |
+| GET | `/v1/ingestion?window=24h` | read | per bucket, by arrival time: accepted events, and refused requests by reason (only those made with this game's keys, expired and revoked ones included); totals; `unattributedBadKey`: refusals whose key matched no game, counted across **all games** on the server |
+| GET | `/v1/ingestion/servers?window=24h` | read | per `serverId`: events, first/last received, `silent` if nothing arrived for 10+ minutes (up to 200 servers, most recent first) |
+| GET | `/v1/admin/keys` | admin | the game's keys: id, prefix, scope, created/last used/expires/revoked times, `status` (`active`, `expiring`, `expired`, `revoked`). Never a hash |
+| POST | `/v1/admin/keys/rotate` | admin | body `{ scope: "ingest" \| "read", graceHours: 0–168 }` (default 24). `201` with the new raw key (only time it's shown) and the old key's new expiry; `409 grace_in_progress` if an older key is still in its grace period (only `graceHours: 0` is allowed then) |
+| POST | `/v1/admin/keys/:id/revoke` | admin | revokes immediately; `403` for admin keys, `404` for another game's key, `409` if already revoked |
+| GET | `/v1/admin/audit?limit=50&cursor=` | admin | rotations and revocations, newest first, keyset-paginated (`nextCursor`) |
 
 `window` is `1h`, `24h` (default) or `7d`. Chart `buckets` are `{ start, shadow, enforce }`, oldest first:
 12 × 5 min, 24 × 1 h or 28 × 6 h. They are rolling (the newest ends at the time of the request), and
@@ -123,6 +150,9 @@ totals. Player and remote lists use offset paging because they are sorted by cou
 request, which no index can seek on; the violations list keeps keyset paging. A remote named exactly
 `.` or `..` can't be opened by path (URL parsers drop dot segments), but still shows in lists and
 timelines.
+
+Every admin response is sent `Cache-Control: no-store`, and every admin action writes one
+`admin_audit` row in the same transaction as the change.
 
 Event shape (`timestamp` is Unix milliseconds):
 
@@ -134,20 +164,9 @@ Event shape (`timestamp` is Unix milliseconds):
 
 ## Roblox setup
 
-1. Create an ingest key: `npm run create-key -w api -- --game "My Game" --universe <universeId> --scope ingest`.
-2. In Creator Hub, add it as a secret named `OculusApiKey` for your experience, and turn on **Allow HTTP Requests**.
-3. Put `roblox/OculusClient.luau` in `ServerScriptService` and attach it to Remote-Guard:
-
-```lua
-local Guard = require(ServerScriptService.RemoteGuard)
-local Oculus = require(ServerScriptService.OculusClient)
-
-local oculus = Oculus.new({ url = "https://<your-host>/v1/events" })
-Guard.logger:addSink(oculus:sink())
-game:BindToClose(function()
-	oculus:close()
-end)
-```
+In short: an ingest key as the `OculusApiKey` secret in Creator Hub, HTTP requests allowed,
+`OculusClient.luau` in ServerScriptService as a Remote-Guard sink. Step by step, with a Studio
+play-test plan and how to rotate the ingest key: [docs/roblox-integration.md](docs/roblox-integration.md).
 
 The client flushes every 5s (up to 3 batches of 100), retries 429/5xx/network errors with
 exponential backoff and jitter, drops 4xx batches immediately, and caps its queue at 1000
@@ -155,38 +174,29 @@ events (with one warning per interval).
 
 ## Deploy (Oracle Cloud VM)
 
-1. Point a DNS name at the VM (any provider; a free dynamic-DNS name works), and allow inbound
-   TCP 80 and 443 (plus UDP 443 for HTTP/3) in both the VCN security list and the VM's own firewall.
-2. Configure and start:
+Full guide, from an empty Oracle account to a smoke-tested deploy, with backups, restore and
+moving hosts: [docs/deploy-oracle.md](docs/deploy-oracle.md). In short:
 
 ```bash
-cp .env.example .env    # set POSTGRES_PASSWORD, OCULUS_DOMAIN, DASHBOARD_USER, DASHBOARD_PASSWORD
+cp .env.example .env    # POSTGRES_PASSWORD, DOMAIN, DASHBOARD_USER, DASHBOARD_PASSWORD_HASH (single quotes)
 docker compose --profile deploy up -d --build
+# first boot stops at the dashboard (no read key yet): create read, ingest and admin keys
+docker compose --profile deploy exec api node dist/bin/create-key.js --game "My Game" --universe <id> --scope read
+# put the read key in .env as OCULUS_READ_KEY, then:
+docker compose --profile deploy up -d
+BASE_URL=https://<DOMAIN> OCULUS_INGEST_KEY=... OCULUS_READ_KEY=... node scripts/smoke.mjs
 ```
 
-3. Create the keys inside the API container (it already has the database settings), put the read
-   key in `.env` as `OCULUS_READ_KEY`, and run the `up` command again to restart the dashboard with it:
-
-```bash
-docker compose --profile deploy exec api node dist/bin/create-key.js --game "My Game" --universe <universeId> --scope read
-docker compose --profile deploy exec api node dist/bin/create-key.js --game "My Game" --universe <universeId> --scope ingest
-```
-
-The dashboard is then at `https://<OCULUS_DOMAIN>/` (behind the login) and game servers post to
-`https://<OCULUS_DOMAIN>/v1/events`. Caddy is the only service with public ports: it gets the
-certificate on first start (keep the `caddy_data` volume, or every restart asks Let's Encrypt
-again). The API applies migrations on start, and Postgres is bound to localhost only.
-
-Caddy and the dashboard each refuse to start if their settings are missing (`docker compose logs
-caddy web` says which one). Until the read key is set, the dashboard container keeps restarting;
-that's expected. The dashboard's nginx proxy forwards the raw, still-encoded path to the API, like
-the Vite dev proxy does, so remote names containing `/` (sent as `%2F`) open correctly.
+Caddy is the only service with public ports (80/443). The API, the dashboard (nginx) and
+Postgres are only reachable inside the compose network. The API and dashboard have
+healthchecks, everything restarts unless stopped, and the `backup` service dumps the database
+nightly into `./backups`.
 
 ## Tests
 
-128 API tests (Vitest, against a real Postgres via `app.inject()`, no network):
+207 API tests (Vitest, against a real Postgres via `app.inject()`, no network):
 validation (11 bad-payload cases, malformed JSON, prototype pollution), auth (missing, malformed,
-unknown, revoked, wrong-scope keys), payload size, per-key rate limiting, rejection-log
+unknown, revoked, expired, wrong-scope keys), payload size, per-key rate limiting, rejection-log
 flood cap, and every query endpoint (24h window, per-game isolation, rule filter, cursor paging
 with no gaps or duplicates).
 
@@ -196,15 +206,34 @@ caps, URL-encoded remote names, 404 without a rejection log, strict validation o
 for ingest or missing keys, the violations `playerId`/`remote` filters combined with `rule` and
 cursor paging, and the read-only snapshot that keeps a response's numbers consistent while ingest runs.
 
+Keys and admin endpoints add: a key working until `expires_at` and refused (401 "expired") after;
+both keys working through a grace period; `graceHours: 0` ending the old key at once; a third
+usable key being impossible, including when 6 rotations race (the tests fail if the per-game lock
+is removed); one admin key per game; read and ingest keys refused on every admin endpoint;
+another game's key ids answering 404; admin keys never revocable; exactly one audit row per action
+and none for refused ones; the raw key only in the rotate response and no hash in any response;
+the admin rate-limit bucket; strict validation of every new param and body. Ingestion: window
+boundaries by arrival time, per-game isolation, refusals attributed to the game's keys (expired
+ones included), unattributed bad-key refusals counted separately, and the silent-server flag.
+
+CI also builds both Docker images and validates the Caddyfile, the rendered nginx config and the
+compose file.
+
 ## Metrics
 
-Not measured yet. Fill these in from real usage, not the seed:
-- **Ingest throughput and p95 latency.** `npm run loadtest -w api -- ingest --url <base>`, with
-  `OCULUS_INGEST_KEY` set to a key for a throwaway game. It posts 100-event batches from 10 workers
-  for 20s, and prints accepted events/s, p50/p95/p99, and every status seen. Normal rate limits cap a
-  key at 60 batches/min, so to measure the server, run an instance with higher `INGEST_*` limits.
-- **Dashboard query time at volume.** After an ingest run, `npm run loadtest -w api -- reads --url <base>`
-  (with `OCULUS_READ_KEY`) times every dashboard endpoint at that data size. Use `EXPLAIN ANALYZE`
-  on whichever is slow.
-- **Events per day and rejected-request mix.** `SELECT reason, count(*) FROM rejected_requests GROUP BY reason`.
-- **Client drop rate.** Count `[Oculus] dropped` warnings in live server logs.
+Not measured yet. Capture these from the live deploy (not the seed), and note the date and data
+volume next to each:
+
+- **Ingest throughput and latency.** `npm run loadtest -w api -- ingest --url <base>` with
+  `OCULUS_INGEST_KEY` for a throwaway game: accepted events/s and p50/p95/p99 per 100-event batch.
+  Normal rate limits cap a key at 60 batches/min, so measure the server on an instance with higher
+  `INGEST_*` limits, and real usage on the live one.
+- **Dashboard query time at real volume.** `npm run loadtest -w api -- reads --url <base>` with
+  `OCULUS_READ_KEY`: p50/p95 for every dashboard endpoint. `EXPLAIN ANALYZE` whichever is slow.
+- **Events per day**, and the **refusal mix by reason** (the Ingestion screen, or
+  `SELECT reason, count(*) FROM rejected_requests GROUP BY reason`), including the unattributed
+  bad-key rate.
+- **Client drop rate.** `[Oculus] dropped` warnings in live server logs.
+- **Backups.** Dump size and duration from `docker compose logs backup`, and how long a restore
+  drill takes.
+- **VM headroom.** `docker stats` (CPU, memory per service) against the Always Free allowance.

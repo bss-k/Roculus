@@ -6,3 +6,6 @@ coverage/
 !.env.example
 *.log
 .DS_Store
+
+# Database dumps from the backup service: real data, never commit them.
+backups/

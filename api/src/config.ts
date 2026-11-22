@@ -12,6 +12,9 @@ const EnvSchema = z.object({
   INGEST_BURST: z.coerce.number().int().positive().default(20),
   READ_PER_MINUTE: z.coerce.number().positive().default(240),
   READ_BURST: z.coerce.number().int().positive().default(40),
+  // Key management is rare and sensitive: its own, smaller bucket.
+  ADMIN_PER_MINUTE: z.coerce.number().positive().default(30),
+  ADMIN_BURST: z.coerce.number().int().positive().default(10),
 });
 
 export type Config = z.infer<typeof EnvSchema>;

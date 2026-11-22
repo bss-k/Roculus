@@ -10,6 +10,11 @@ map $request_uri $api_uri {
   ~^/dash(?<rest>/v1/.*)$ $rest;
   default "";
 }
+# Same for the admin pass-through: /dash/admin/... -> /v1/admin/...
+map $request_uri $admin_uri {
+  ~^/dash/admin(?<rest>/.*)$ /v1/admin$rest;
+  default "";
+}
 
 server {
   listen 80;
@@ -25,6 +30,19 @@ server {
     proxy_pass http://api$api_uri;
     proxy_set_header Authorization "Bearer ${OCULUS_READ_KEY}";
     # Keep the client IP that Caddy passed on, then add Caddy's: the API takes the first one.
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+
+  # Key management: the admin key comes from the person using the dashboard, in
+  # X-Oculus-Admin-Key, and is passed through as "Authorization: Bearer". No key is ever added
+  # here. Overwriting Authorization also drops the browser's dashboard login (Caddy's basic
+  # auth), which the API has no use for.
+  location /dash/admin/ {
+    limit_except GET POST { deny all; }
+    if ($admin_uri = "") { return 400; }
+    proxy_pass http://api$admin_uri;
+    proxy_set_header Authorization "Bearer $http_x_oculus_admin_key";
+    proxy_set_header X-Oculus-Admin-Key "";
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
   }
 

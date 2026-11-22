@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Ingestion } from "./pages/Ingestion";
 import { Overview } from "./pages/Overview";
 import { Players } from "./pages/Players";
 import { Remotes } from "./pages/Remotes";
@@ -9,6 +10,7 @@ const PAGES = {
   violations: { label: "Violations", Component: Violations },
   players: { label: "Players", Component: Players },
   remotes: { label: "Remotes", Component: Remotes },
+  ingestion: { label: "Ingestion & keys", Component: Ingestion },
 };
 type PageId = keyof typeof PAGES;
 

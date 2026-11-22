@@ -117,7 +117,7 @@ function generate(now: number): ViolationEvent[] {
   return events.sort((a, b) => a.timestamp - b.timestamp);
 }
 
-async function mintKey(db: ReturnType<typeof createPool>, gameId: string, scope: "ingest" | "read") {
+async function mintKey(db: ReturnType<typeof createPool>, gameId: string, scope: "ingest" | "read" | "admin") {
   const raw = generateKey();
   await rotateKey(db, { gameId, scope, keyHash: hashKey(raw), keyPrefix: displayPrefix(raw) });
   return raw;
@@ -130,6 +130,7 @@ try {
   await db.query("DELETE FROM events WHERE game_id = $1", [gameId]);
   const ingestKey = await mintKey(db, gameId, "ingest");
   const readKey = await mintKey(db, gameId, "read");
+  const adminKey = await mintKey(db, gameId, "admin");
 
   // Send through the real API (in-process, no network) with rate limits lifted for the seed.
   const app = buildServer({ config: { ...config, INGEST_BURST: 1e6 }, db, logger: false });
@@ -156,6 +157,7 @@ try {
   console.log(`Attack: ${countFor((e) => e.remote === "Attack")} events`);
   console.log(`read key written to web/.env.local`);
   console.log(`ingest key (for manual curl tests): ${ingestKey}`);
+  console.log(`admin key (paste into the Ingestion & keys screen to unlock it): ${adminKey}`);
 } finally {
   await db.end();
 }

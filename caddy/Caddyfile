@@ -1,13 +1,35 @@
-# The deploy's only public entry point: HTTPS for everything. Caddy gets and renews the
-# certificate from Let's Encrypt (or uses its own local CA when OCULUS_DOMAIN is localhost).
-{$OCULUS_DOMAIN} {
+# The deploy's only public entry point. Caddy terminates TLS: it gets and renews the HTTPS
+# certificate for {$DOMAIN} from Let's Encrypt (or uses its own local CA when DOMAIN is
+# localhost), decrypts each request, and passes it on as plain HTTP inside the compose network.
+{$DOMAIN} {
+	# Sent on every response, whichever service answered.
+	header {
+		# Browsers only use HTTPS for this site from now on (a year), even if someone types http://.
+		Strict-Transport-Security "max-age=31536000"
+		# Use the Content-Type as given; never guess (stops a JSON reply being run as a script).
+		X-Content-Type-Options "nosniff"
+		# The dashboard can't be shown inside another site's frame (clickjacking).
+		X-Frame-Options "DENY"
+		# Don't tell other sites which dashboard page a link was clicked on.
+		Referrer-Policy "no-referrer"
+		# Don't advertise what's running.
+		-Server
+	}
+
+	# Same limit as the API (BODY_LIMIT_BYTES, 128 KiB): oversized bodies stop here, before they
+	# reach the API. Side effect: they get a 413 from Caddy but no rejected_requests row.
+	request_body {
+		max_size 128KiB
+	}
+
 	# Game servers and other API clients. Every /v1 endpoint checks its own API key.
 	handle /v1/* {
 		reverse_proxy api:3000
 	}
 
-	# The dashboard is for people, so it gets a login. The browser resends these credentials
-	# with every /dash/v1 call, and nginx behind this adds the read key for the API.
+	# The dashboard (including its /dash/* API calls) is for people, so it needs a login. The
+	# browser resends these credentials with every request; nginx behind this adds the read key
+	# for /dash/v1, and passes a typed-in admin key through for /dash/admin.
 	handle {
 		basic_auth {
 			{$DASHBOARD_USER} {$DASHBOARD_PASSWORD_HASH}

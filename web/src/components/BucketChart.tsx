@@ -14,7 +14,7 @@ const PLOT_W = WIDTH - PAD.left - PAD.right;
 const PLOT_H = HEIGHT - PAD.top - PAD.bottom;
 
 // A rounded axis max (1, 2, 5 x 10^n) so gridlines land on readable numbers.
-function niceMax(value: number): number {
+export function niceMax(value: number): number {
   if (value <= 0) return 4;
   const magnitude = 10 ** Math.floor(Math.log10(value));
   const step = [1, 2, 5, 10].find((s) => s * magnitude >= value)!;

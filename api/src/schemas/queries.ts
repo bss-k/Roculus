@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { WINDOW_IDS } from "../lib/windows.js";
+import { MAX_GRACE_HOURS } from "../repo/keys.js";
 import type { Cursor } from "../repo/stats.js";
 
 // Query strings arrive as text, so numbers are coerced. Every schema is strict.
@@ -71,3 +72,23 @@ export const RemotesQuery = z.strictObject({
 
 // Fastify has already URL-decoded the path param, so this is the real name's length.
 export const RemoteParams = z.strictObject({ remote: remoteName });
+
+// Admin endpoints (Milestone 3).
+
+// Only ingest and read keys can be rotated here. Admin keys are replaced with the create-key CLI,
+// so a mistake in the dashboard can't lock everyone out. JSON body: numbers are real numbers.
+export const RotateBody = z.strictObject({
+  scope: z.enum(["ingest", "read"]),
+  graceHours: z.number().int().min(0).max(MAX_GRACE_HOURS).default(24),
+});
+
+export const KeyParams = z.strictObject({ id: z.uuid() });
+
+// Revoke takes no body; an empty JSON object is also accepted.
+export const EmptyBody = z.strictObject({}).optional();
+
+export const AuditQuery = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  // The id of the last row seen (the previous page's nextCursor).
+  cursor: z.string().regex(/^\d{1,15}$/, "invalid cursor").transform(Number).optional(),
+});

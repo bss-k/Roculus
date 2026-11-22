@@ -32,7 +32,7 @@ export function registerErrorHandler(app: FastifyInstance, db: Db, bodyLimit: nu
     try {
       await insertRejection(db, {
         reason: rejection.reason,
-        apiKeyId: request.auth?.id ?? null,
+        apiKeyId: rejection.apiKeyId ?? request.auth?.id ?? null,
         ip: request.ip,
         route: request.routeOptions.url ?? request.url,
         detail: rejection.detail,

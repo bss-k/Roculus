@@ -2,7 +2,7 @@
 # Deploy:     docker compose --profile deploy up -d --build   (reads .env)
 #
 # In the deploy, Caddy is the only service with public ports. The API and the dashboard are
-# reachable only through it, inside the compose network.
+# reachable only through it, inside the compose network; Postgres only from this machine.
 services:
   db:
     image: postgres:16-alpine
@@ -20,6 +20,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   api:
     profiles: ["deploy"]
@@ -31,8 +32,15 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       # Requests arrive through Caddy (and nginx, for the dashboard), so the client's IP is in
-      # X-Forwarded-For. Trusting it is safe only because the API has no published port.
+      # X-Forwarded-For. Trusting it is safe only because the API has no published port: every
+      # request comes through Caddy, which overwrites whatever X-Forwarded-For the client sent.
       TRUST_PROXY: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s # migrations run before the server starts listening
     depends_on:
       db:
         condition: service_healthy
@@ -47,19 +55,25 @@ services:
       # Not `:?` here: compose checks that for every service, even ones whose profile is off.
       # The web container refuses to start without a key instead (web/require-read-key.sh).
       OCULUS_READ_KEY: ${OCULUS_READ_KEY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   caddy:
     profiles: ["deploy"]
-    image: caddy:2.11-alpine
-    # Checks the settings below and hashes the dashboard password before starting Caddy.
+    image: caddy:2-alpine
+    # Checks the settings below before starting Caddy (clearer errors than Caddy's own).
     entrypoint: ["/bin/sh", "/etc/caddy/start.sh"]
     environment:
-      OCULUS_DOMAIN: ${OCULUS_DOMAIN:-}
+      DOMAIN: ${DOMAIN:-}
       DASHBOARD_USER: ${DASHBOARD_USER:-}
-      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH:-}
     ports:
       - "80:80" # certificate challenges, and redirects to HTTPS
       - "443:443"
@@ -70,8 +84,30 @@ services:
       - caddy_data:/data # certificates: keep them, or every restart asks Let's Encrypt again
       - caddy_config:/config
     depends_on:
-      - api
-      - web
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Nightly pg_dump into ./backups, keeping 7 days (scripts/backup.sh). Restore: scripts/restore.sh.
+  backup:
+    profiles: ["deploy"]
+    image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: oculus
+      PGPASSWORD: ${POSTGRES_PASSWORD:-oculus}
+      PGDATABASE: oculus
+      BACKUP_HOUR_UTC: ${BACKUP_HOUR_UTC:-3}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+    volumes:
+      - ./scripts/backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

@@ -12,6 +12,9 @@ export default tseslint.config(
   },
   {
     files: ["scripts/**/*.mjs"],
-    languageOptions: { globals: { process: "readonly" } },
+    // Plain Node scripts: the Node globals they use.
+    languageOptions: {
+      globals: { process: "readonly", console: "readonly", fetch: "readonly", setTimeout: "readonly", AbortSignal: "readonly" },
+    },
   },
 );

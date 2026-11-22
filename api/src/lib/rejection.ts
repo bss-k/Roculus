@@ -1,6 +1,8 @@
 import type { ZodError } from "zod";
 
-export type RejectReason = "bad_key" | "invalid_schema" | "rate_limited" | "too_large";
+// Must match the rejected_requests.reason check in migrations/001_init.sql.
+export const REJECT_REASONS = ["bad_key", "invalid_schema", "rate_limited", "too_large"] as const;
+export type RejectReason = (typeof REJECT_REASONS)[number];
 
 // Thrown anywhere in the request lifecycle; the error handler logs and answers it.
 export class Rejection extends Error {
@@ -10,6 +12,9 @@ export class Rejection extends Error {
     message: string,
     readonly detail?: unknown,
     readonly headers: Record<string, string> = {},
+    // The key a refused request used, when it isn't request.auth: a real key that is expired or
+    // revoked. Lets the rejection log attribute it to that key's game.
+    readonly apiKeyId?: string,
   ) {
     super(message);
   }

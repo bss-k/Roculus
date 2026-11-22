@@ -3,7 +3,9 @@ import type { Config } from "./config.js";
 import type { Db } from "./db/pool.js";
 import { createTokenBucket } from "./lib/tokenBucket.js";
 import { registerErrorHandler } from "./plugins/errorHandler.js";
+import { adminRoutes } from "./routes/admin.js";
 import { ingestRoutes } from "./routes/ingest.js";
+import { ingestionRoutes } from "./routes/ingestion.js";
 import { playersRoutes } from "./routes/players.js";
 import { remotesRoutes } from "./routes/remotes.js";
 import { statsRoutes } from "./routes/stats.js";
@@ -39,11 +41,18 @@ export function buildServer({ config, db, logger = true }: ServerDeps): FastifyI
     refillPerSecond: perSecond(config.READ_PER_MINUTE),
   });
 
+  const adminBucket = createTokenBucket({
+    capacity: config.ADMIN_BURST,
+    refillPerSecond: perSecond(config.ADMIN_PER_MINUTE),
+  });
+
   app.get("/healthz", async () => ({ ok: true }));
   app.register(ingestRoutes(db, ingestBucket));
   app.register(statsRoutes(db, readBucket));
   app.register(playersRoutes(db, readBucket));
   app.register(remotesRoutes(db, readBucket));
+  app.register(ingestionRoutes(db, readBucket));
+  app.register(adminRoutes(db, adminBucket));
 
   return app;
 }

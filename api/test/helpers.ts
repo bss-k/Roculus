@@ -15,7 +15,7 @@ export function testDb(): Db {
 }
 
 export async function resetDb(db: Db): Promise<void> {
-  await db.query("TRUNCATE games, api_keys, events, rejected_requests RESTART IDENTITY CASCADE");
+  await db.query("TRUNCATE games, api_keys, events, rejected_requests, admin_audit RESTART IDENTITY CASCADE");
 }
 
 export function testApp(db: Db, overrides: Partial<Config> = {}): FastifyInstance {
@@ -23,7 +23,7 @@ export function testApp(db: Db, overrides: Partial<Config> = {}): FastifyInstanc
   return buildServer({ config, db, logger: false });
 }
 
-async function mintKey(db: Db, gameId: string, scope: KeyScope): Promise<string> {
+export async function mintKey(db: Db, gameId: string, scope: KeyScope): Promise<string> {
   const raw = generateKey();
   await rotateKey(db, { gameId, scope, keyHash: hashKey(raw), keyPrefix: displayPrefix(raw) });
   return raw;
