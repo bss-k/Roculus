@@ -23,22 +23,30 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="topbar-start">
-          <div className="brand">
-            <span className="brand-mark" aria-hidden />
-            Roculus
+        <div className="topbar-inner">
+          <div className="topbar-start">
+            <div className="brand">
+              <span className="brand-mark" aria-hidden />
+              Roculus
+            </div>
+            <nav aria-label="Dashboard screens">
+              {(Object.keys(PAGES) as PageId[]).map((id) => (
+                <button
+                  key={id}
+                  className={id === page ? "tab tab-active" : "tab"}
+                  aria-current={id === page ? "page" : undefined}
+                  onClick={() => setPage(id)}
+                >
+                  {PAGES[id].label}
+                  <span className="tab-line" aria-hidden />
+                </button>
+              ))}
+            </nav>
           </div>
           {games && current && <GamePicker games={games} current={current} onChange={select} />}
         </div>
-        <nav>
-          {(Object.keys(PAGES) as PageId[]).map((id) => (
-            <button key={id} className={id === page ? "tab tab-active" : "tab"} onClick={() => setPage(id)}>
-              {PAGES[id].label}
-            </button>
-          ))}
-        </nav>
       </header>
-      <main>
+      <main className="content">
         {error ? (
           <div className="banner">Couldn&apos;t load the list of games: {error}</div>
         ) : !games ? (
