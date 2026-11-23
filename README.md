@@ -1,11 +1,8 @@
 # Oculus
 
-Security telemetry for Roblox games. Game servers running Remote-Guard
+Security telemetry for games. Game servers running [Remote-Guard](https://github.com/bss-k/Remote-Guard)
 report exploit and violation events to a hardened ingest API; a dashboard shows what is being
 attacked, by whom, and whether the guard is blocking it (`enforce`) or only watching (`shadow`).
-
-![Overview screen with seeded demo data](docs/overview.png)
-<sub>Overview screen, populated by `npm run seed` (generated demo data, not production traffic).</sub>
 
 ## Architecture
 
