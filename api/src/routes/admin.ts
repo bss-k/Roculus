@@ -4,8 +4,8 @@ import { displayPrefix, generateKey, hashKey } from "../lib/keys.js";
 import type { TokenBucket } from "../lib/tokenBucket.js";
 import { validate } from "../lib/validate.js";
 import { authed, rateLimit, requireKey } from "../plugins/guards.js";
-import { listAudit, listKeys, revokeKey, rotateKey } from "../repo/keys.js";
-import { AuditQuery, EmptyBody, KeyParams, RotateBody } from "../schemas/queries.js";
+import { getGame, listAudit, listKeys, revokeKey, rotateKey } from "../repo/keys.js";
+import { AuditQuery, EmptyBody, KeyParams, NoQuery, RotateBody } from "../schemas/queries.js";
 
 /*
   Key management for one game: admin-scoped keys only, with their own rate-limit bucket.
@@ -20,6 +20,13 @@ export function adminRoutes(db: Db, bucket: TokenBucket) {
     // should keep a copy of any of it. Set on every reply here, errors included.
     app.addHook("onSend", async (_request, reply) => {
       reply.header("cache-control", "no-store");
+    });
+
+    // Which game this admin key manages, so the dashboard can refuse to show one game's keys
+    // while it is showing another game's analytics.
+    app.get("/v1/admin/game", async (request) => {
+      validate(NoQuery, request.query);
+      return { game: await getGame(db, authed(request).gameId) };
     });
 
     app.get("/v1/admin/keys", async (request) => {

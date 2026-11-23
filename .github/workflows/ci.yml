@@ -55,8 +55,12 @@ jobs:
             -v "$PWD/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Check nginx config (rendered from the template, as in the web image)
+        # Throwaway values in the shape of real keys: several games, then the single-key setting.
         run: |
-          docker run --rm --add-host api:127.0.0.1 -e OCULUS_READ_KEY=ci oculus-web:ci \
+          docker run --rm --add-host api:127.0.0.1 \
+            -e OCULUS_READ_KEYS="game-a=ci_only_not_a_real_key_a,game-b=ci_only_not_a_real_key_b" oculus-web:ci \
+            sh -c '/docker-entrypoint.sh nginx -t'
+          docker run --rm --add-host api:127.0.0.1 -e OCULUS_READ_KEY=ci_only_not_a_real_key oculus-web:ci \
             sh -c '/docker-entrypoint.sh nginx -t'
       - name: Validate docker-compose.yml
         run: docker compose --env-file .env.example --profile deploy config --quiet

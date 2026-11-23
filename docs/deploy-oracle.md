@@ -114,7 +114,7 @@ Fill in `.env` (it's git-ignored; never commit it):
 | `DOMAIN` | the DNS name from step 4 |
 | `DASHBOARD_USER` | the dashboard login name (letters, digits, `.`, `_`, `-`) |
 | `DASHBOARD_PASSWORD_HASH` | a bcrypt hash of the dashboard password, **in single quotes** (see below) |
-| `OCULUS_READ_KEY` | leave empty for now: created in step 6 |
+| `OCULUS_READ_KEYS` | leave empty for now: created in step 6 |
 | `BACKUP_HOUR_UTC`, `BACKUP_KEEP_DAYS` | optional; default 3 (03:00 UTC) and 7 |
 
 Make the password hash (it asks for the password twice, without echoing it):
@@ -144,7 +144,10 @@ docker compose --profile deploy exec api node dist/bin/create-key.js --game "My 
 docker compose --profile deploy exec api node dist/bin/create-key.js --game "My Game" --universe <universeId> --scope admin
 ```
 
-- **read**: put it in `.env` as `OCULUS_READ_KEY`.
+- **read**: put it in `.env` as `OCULUS_READ_KEYS=my-game=<read key>`. `my-game` is a short
+  name you pick for this game (lowercase letters, digits and dashes); the dashboard shows the
+  game's real name. The older `OCULUS_READ_KEY=<read key>` also still works for a single game,
+  but set only one of the two.
 - **ingest**: goes into Roblox as the `OculusApiKey` secret ([roblox-integration.md](roblox-integration.md)).
 - **admin**: keep it in your password manager. It unlocks key management on the dashboard's
   "Ingestion & keys" screen. It is never stored by the dashboard, only typed in when needed.
@@ -174,10 +177,44 @@ docker run --rm -v "$PWD/scripts:/scripts:ro" \
   node:22-alpine node /scripts/smoke.mjs
 ```
 
-It posts one test event (remote `OculusSmokeTest`, player `OculusSmoke`, shadow mode), reads it
+Use one game's ingest and read keys (the same game's). It posts one test event (remote `OculusSmokeTest`, player `OculusSmoke`, shadow mode), reads it
 back, checks that a made-up key is refused and that Caddy's security headers are present, and
 exits non-zero if anything fails. The test event stays visible on the dashboard. Finally, open
 `https://oculus.example.com/` in a browser and log in.
+
+### More than one game
+
+The dashboard can switch between several games (a menu appears in its header once there are
+two or more). For each extra game:
+
+1. Create its keys with a new name and universe ID:
+
+   ```bash
+   docker compose --profile deploy exec api node dist/bin/create-key.js --game "Other Game" --universe <its universeId> --scope read
+   docker compose --profile deploy exec api node dist/bin/create-key.js --game "Other Game" --universe <its universeId> --scope ingest
+   docker compose --profile deploy exec api node dist/bin/create-key.js --game "Other Game" --universe <its universeId> --scope admin
+   ```
+
+2. Add its read key to the list in `.env`, separated by a comma (placeholders shown):
+
+   ```bash
+   OCULUS_READ_KEYS=my-game=ocl_xxxxxxxx,other-game=ocl_yyyyyyyy
+   ```
+
+   If your `.env` still has the single-game `OCULUS_READ_KEY=...` line, move that key into the
+   list (as `my-game=<that key>`) and delete the old line: the dashboard refuses to start with both.
+
+3. Restart the dashboard: `docker compose --profile deploy up -d web`. Its log
+   (`docker compose --profile deploy logs web`) lists the games it found, or says what's wrong
+   with the list.
+
+The ingest key goes into that game's Roblox secrets, as for the first game. Each admin key only
+manages its own game's keys: the keys screen refuses another game's admin key, so pick the game
+in the header menu first.
+
+How it stays safe: the read keys never leave the server. The browser only says which game it
+wants (by its short name); nginx adds that game's read key, and refuses a name it doesn't know
+rather than falling back to another game's key.
 
 ## 7. Updating
 
@@ -193,7 +230,8 @@ The API applies any new migrations when it starts.
 On the dashboard: **Ingestion & keys → Keys**, unlock with the admin key.
 
 - **Rotate the read key:** pick a grace period (both keys work during it), put the new key in
-  `.env`, then `docker compose --profile deploy up -d web` before the grace period ends.
+  `.env` after that game's `slug=` in `OCULUS_READ_KEYS`, then
+  `docker compose --profile deploy up -d web` before the grace period ends.
 - **Rotate the ingest key:** see [roblox-integration.md](roblox-integration.md#rotating-the-ingest-key).
 - **Revoke:** immediate, for read and ingest keys.
 - **Admin key:** only replaced with `create-key ... --scope admin` (no grace period; the old one stops
@@ -279,6 +317,8 @@ Then remove the copy: `docker compose exec db dropdb -U oculus oculus_restore`.
 | `curl` to the domain times out | a firewall layer: security list ingress (2a) or iptables order (2b) |
 | Caddy logs certificate errors | DNS not pointing at this VM yet, or port 80 blocked |
 | `caddy` keeps restarting | `docker compose --profile deploy logs caddy`: a missing `DOMAIN`, a bad `DASHBOARD_USER`, or a hash not in single quotes |
-| `web` keeps restarting | `OCULUS_READ_KEY` empty: create a read key (section 6) |
+| `web` keeps restarting | `docker compose --profile deploy logs web` says why: no read key yet (section 6), both `OCULUS_READ_KEYS` and `OCULUS_READ_KEY` set, or a malformed `slug=key` entry |
 | Dashboard loads but shows "Can't reach the API" | the read key in `.env` was revoked or expired: put the current one in and `up -d web` |
+| A game in the menu says "read key not working" | that game's key in `OCULUS_READ_KEYS` is mistyped, revoked or expired: put its current read key in and `up -d web` |
+| Keys screen says the admin key "is for" another game | pick that game in the header menu first, or use the admin key of the game on screen |
 | Game servers' events don't arrive | the Ingestion & keys screen: refusals by reason, and which servers are sending |

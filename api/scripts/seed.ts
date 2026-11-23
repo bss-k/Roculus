@@ -1,7 +1,8 @@
 /*
-  Local demo data. Creates a "Demo Game", mints fresh ingest + read keys, and sends ~24h of
-  realistic violations through the real POST /v1/events path (so validation is exercised).
-  The read key is written to web/.env.local for the Vite dev proxy.
+  Local demo data. Creates two demo games ("Demo Game" and "Demo Obby", so the dashboard's game
+  picker has something to switch between), mints fresh ingest + read + admin keys for each, and
+  sends ~24h of realistic violations through the real POST /v1/events path (so validation is
+  exercised). The read keys are written to web/.env.local (OCULUS_READ_KEYS) for the Vite proxy.
 
   Shape of the fake traffic:
     - steady background noise: laggy players tripping rate limits, old clients failing schemas
@@ -19,7 +20,11 @@ import { rotateKey, upsertGame } from "../src/repo/keys.js";
 import { MAX_BATCH, type ViolationEvent } from "../src/schemas/events.js";
 import { buildServer } from "../src/server.js";
 
-const DEMO_UNIVERSE = 1;
+// slug: the game's name in OCULUS_READ_KEYS. scale: share of the traffic below it gets.
+const DEMO_GAMES = [
+  { slug: "demo", name: "Demo Game", universe: 1, scale: 1 },
+  { slug: "obby", name: "Demo Obby", universe: 2, scale: 0.35 },
+] as const;
 const HOUR = 3600_000;
 
 // Deterministic PRNG (mulberry32) so every seed run looks the same.
@@ -83,12 +88,15 @@ function event(timestamp: number, player: (typeof PLAYERS)[number], remote: Remo
   };
 }
 
-function generate(now: number): ViolationEvent[] {
+// A smaller game gets fewer of them.
+const exploitersFor = (scale: number) => EXPLOITERS.slice(0, Math.max(1, Math.round(EXPLOITERS.length * scale)));
+
+function generate(now: number, scale: number): ViolationEvent[] {
   const events: ViolationEvent[] = [];
   const start = now - 23.5 * HOUR;
 
   // Background noise, busier in the evening hours.
-  for (let i = 0; i < 1400; i++) {
+  for (let i = 0; i < 1400 * scale; i++) {
     const t = start + rand() * (now - start);
     const hour = new Date(t).getUTCHours();
     if (rand() > (hour >= 0 && hour <= 6 ? 1 : 0.55)) continue; // UTC 0-6 ≈ US evening peak
@@ -98,7 +106,7 @@ function generate(now: number): ViolationEvent[] {
 
   // Exploiters: the same few players coming back for several bursts across the day, each burst
   // a few minutes of spam, mostly at Attack. Two of them also probe BuyItem (still in shadow).
-  EXPLOITERS.forEach((exploiter, n) => {
+  exploitersFor(scale).forEach((exploiter, n) => {
     const secondary: Remote = n < 2 ? "BuyItem" : "UseAbility";
     const bursts = 3 + Math.floor(rand() * 2);
     for (let b = 0; b < bursts; b++) {
@@ -126,38 +134,47 @@ async function mintKey(db: ReturnType<typeof createPool>, gameId: string, scope:
 const config = loadConfig();
 const db = createPool(config.DATABASE_URL);
 try {
-  const gameId = await upsertGame(db, "Demo Game", DEMO_UNIVERSE);
-  await db.query("DELETE FROM events WHERE game_id = $1", [gameId]);
-  const ingestKey = await mintKey(db, gameId, "ingest");
-  const readKey = await mintKey(db, gameId, "read");
-  const adminKey = await mintKey(db, gameId, "admin");
-
   // Send through the real API (in-process, no network) with rate limits lifted for the seed.
   const app = buildServer({ config: { ...config, INGEST_BURST: 1e6 }, db, logger: false });
-  const events = generate(Date.now());
-  for (let i = 0; i < events.length; i += MAX_BATCH) {
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/events",
-      headers: { authorization: `Bearer ${ingestKey}` },
-      payload: { events: events.slice(i, i + MAX_BATCH) },
-    });
-    if (res.statusCode !== 202) throw new Error(`seed batch failed: ${res.statusCode} ${res.body}`);
+  const readKeys: string[] = [];
+  const printed: string[] = [];
+  for (const demo of DEMO_GAMES) {
+    const gameId = await upsertGame(db, demo.name, demo.universe);
+    await db.query("DELETE FROM events WHERE game_id = $1", [gameId]);
+    const ingestKey = await mintKey(db, gameId, "ingest");
+    const readKey = await mintKey(db, gameId, "read");
+    const adminKey = await mintKey(db, gameId, "admin");
+    readKeys.push(`${demo.slug}=${readKey}`);
+
+    const events = generate(Date.now(), demo.scale);
+    for (let i = 0; i < events.length; i += MAX_BATCH) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/v1/events",
+        headers: { authorization: `Bearer ${ingestKey}` },
+        payload: { events: events.slice(i, i + MAX_BATCH) },
+      });
+      if (res.statusCode !== 202) throw new Error(`seed batch failed: ${res.statusCode} ${res.body}`);
+    }
+
+    const countFor = (match: (e: ViolationEvent) => boolean) => events.filter(match).length;
+    printed.push(
+      `"${demo.name}" (${demo.slug}): ${events.length} events, Attack ${countFor((e) => e.remote === "Attack")}`,
+      `  exploiters: ${exploitersFor(demo.scale).map((p) => `${p.name} (${countFor((e) => e.playerId === p.id)})`).join(", ")}`,
+      `  ingest key (for manual curl tests): ${ingestKey}`,
+      `  admin key (paste into the Ingestion & keys screen to unlock it): ${adminKey}`,
+    );
   }
   await app.close();
 
   const envPath = fileURLToPath(new URL("../../web/.env.local", import.meta.url));
-  await writeFile(envPath, `# Written by npm run seed. Dev-only read key used by the Vite proxy.\nOCULUS_READ_KEY=${readKey}\n`);
-
-  console.log(`seeded ${events.length} events for "Demo Game"`);
-  const countFor = (match: (e: ViolationEvent) => boolean) => events.filter(match).length;
-  console.log(
-    `exploiters: ${EXPLOITERS.map((p) => `${p.name} (${countFor((e) => e.playerId === p.id)})`).join(", ")}`,
+  await writeFile(
+    envPath,
+    `# Written by npm run seed. Dev-only read keys (one per game) used by the Vite proxy.\nOCULUS_READ_KEYS=${readKeys.join(",")}\n`,
   );
-  console.log(`Attack: ${countFor((e) => e.remote === "Attack")} events`);
-  console.log(`read key written to web/.env.local`);
-  console.log(`ingest key (for manual curl tests): ${ingestKey}`);
-  console.log(`admin key (paste into the Ingestion & keys screen to unlock it): ${adminKey}`);
+
+  for (const line of printed) console.log(line);
+  console.log("read keys written to web/.env.local");
 } finally {
   await db.end();
 }

@@ -10,6 +10,14 @@ map $request_uri $api_uri {
   ~^/dash(?<rest>/v1/.*)$ $rest;
   default "";
 }
+# The dashboard says which game it wants in X-Oculus-Game (a slug from /dash/games.json); this
+# picks that game's read key. The entries are written at container start from OCULUS_READ_KEYS
+# by render-read-keys.sh. A missing or unknown slug gets "", which is refused below: never
+# another game's key.
+map $http_x_oculus_game $oculus_read_key {
+  default "";
+  include /etc/nginx/oculus/read-keys.map;
+}
 # Same for the admin pass-through: /dash/admin/... -> /v1/admin/...
 map $request_uri $admin_uri {
   ~^/dash/admin(?<rest>/.*)$ /v1/admin$rest;
@@ -21,14 +29,28 @@ server {
   root /usr/share/nginx/html;
   server_tokens off; # don't advertise the nginx version in headers and error pages
 
-  # Dashboard API calls: GET only, read key added here (same job as the Vite dev proxy).
+  # The games the dashboard can show: slugs only, no keys (written by render-read-keys.sh).
+  location = /dash/games.json {
+    limit_except GET { deny all; }
+    alias /etc/nginx/oculus/games.json;
+    default_type application/json;
+    add_header Cache-Control "no-store" always;
+  }
+
+  # Dashboard API calls: GET only, the chosen game's read key added here (same job as the
+  # Vite dev proxy).
   location /dash/v1/ {
     limit_except GET { deny all; }
     # The decoded path matched this location but the raw one doesn't start with /dash/v1/
     # (e.g. /dash/%761/...): refuse rather than guess.
     if ($api_uri = "") { return 400; }
+    default_type application/json;
+    if ($oculus_read_key = "") {
+      return 400 '{"error":"unknown_game","message":"unknown game: reload the page and pick one from the list"}';
+    }
     proxy_pass http://api$api_uri;
-    proxy_set_header Authorization "Bearer ${OCULUS_READ_KEY}";
+    proxy_set_header Authorization "Bearer $oculus_read_key";
+    proxy_set_header X-Oculus-Game "";
     # Keep the client IP that Caddy passed on, then add Caddy's: the API takes the first one.
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
   }

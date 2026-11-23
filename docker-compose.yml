@@ -53,7 +53,9 @@ services:
       dockerfile: web/Dockerfile
     environment:
       # Not `:?` here: compose checks that for every service, even ones whose profile is off.
-      # The web container refuses to start without a key instead (web/require-read-key.sh).
+      # The web container refuses to start without a key instead (web/render-read-keys.sh).
+      # Set one of the two: several games, or the older single-game setting.
+      OCULUS_READ_KEYS: ${OCULUS_READ_KEYS:-}
       OCULUS_READ_KEY: ${OCULUS_READ_KEY:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]

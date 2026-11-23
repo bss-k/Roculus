@@ -28,8 +28,8 @@
 	}
 
 	# The dashboard (including its /dash/* API calls) is for people, so it needs a login. The
-	# browser resends these credentials with every request; nginx behind this adds the read key
-	# for /dash/v1, and passes a typed-in admin key through for /dash/admin.
+	# browser resends these credentials with every request; nginx behind this adds the chosen
+	# game's read key for /dash/v1, and passes a typed-in admin key through for /dash/admin.
 	handle {
 		basic_auth {
 			{$DASHBOARD_USER} {$DASHBOARD_PASSWORD_HASH}

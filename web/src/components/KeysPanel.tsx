@@ -5,9 +5,14 @@
   the URL or a cookie. It's gone when you press Lock, leave this screen or reload the page.
   Admin keys themselves can't be rotated or revoked here (only with the create-key CLI), so
   nothing done on this screen can lock you out of it.
+
+  An admin key manages exactly one game: the one it was made for. Unlocking checks that this is
+  the game the dashboard is showing (the game picker at the top), so you never manage one
+  game's keys while looking at another's numbers. Switching games locks this screen again.
 */
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { AdminError, adminApi, type AuditRow, type KeyRow, type KeyStatus, type RotatedKey } from "../api/client";
+import { gameLabel, useCurrentGame, type Game } from "../hooks/useGames";
 import { formatDateTime, timeAgo } from "../lib/format";
 import { Modal } from "./Modal";
 import { Empty, Panel } from "./Panel";
@@ -38,6 +43,7 @@ function keyProblem(err: unknown): string {
 }
 
 export function KeysPanel() {
+  const game = useCurrentGame();
   const [adminKey, setAdminKey] = useState<string | null>(null);
   const [lockReason, setLockReason] = useState<string | null>(null);
 
@@ -46,9 +52,11 @@ export function KeysPanel() {
     setLockReason(reason);
   }, []);
 
+  if (!game) return null;
   if (!adminKey) {
     return (
       <UnlockForm
+        game={game}
         notice={lockReason}
         onUnlocked={(key) => {
           setLockReason(null);
@@ -57,10 +65,10 @@ export function KeysPanel() {
       />
     );
   }
-  return <KeyManager adminKey={adminKey} onLock={lock} />;
+  return <KeyManager game={game} adminKey={adminKey} onLock={lock} />;
 }
 
-function UnlockForm({ notice, onUnlocked }: { notice: string | null; onUnlocked: (key: string) => void }) {
+function UnlockForm({ game, notice, onUnlocked }: { game: Game; notice: string | null; onUnlocked: (key: string) => void }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,7 +80,19 @@ function UnlockForm({ notice, onUnlocked }: { notice: string | null; onUnlocked:
     setBusy(true);
     setError(null);
     try {
-      await adminApi.keys(key); // a cheap call that proves the key is a working admin key
+      // Proves the key is a working admin key, and says which game it manages.
+      const keyGame = await adminApi.game(key);
+      if (!game.info) {
+        setError(`Can't check which game that admin key is for: the read key for “${game.slug}” isn't working.`);
+        return;
+      }
+      if (keyGame.universeId !== game.info.universeId) {
+        setError(
+          `That admin key is for “${keyGame.name}” (universe ${keyGame.universeId}), but the dashboard is showing ` +
+            `“${game.info.name}”. Use ${game.info.name}'s admin key, or switch games in the menu at the top.`,
+        );
+        return;
+      }
       setValue("");
       onUnlocked(key);
     } catch (err) {
@@ -87,9 +107,9 @@ function UnlockForm({ notice, onUnlocked }: { notice: string | null; onUnlocked:
       {notice && <div className="banner">{notice}</div>}
       <form className="unlock" onSubmit={submit}>
         <p className="muted">
-          Managing keys needs this game&apos;s <strong>admin key</strong> (made with{" "}
+          Managing the keys of <strong>{gameLabel(game)}</strong> needs its <strong>admin key</strong> (made with{" "}
           <code className="mono">create-key --scope admin</code>). It stays in this page&apos;s memory only, until you
-          lock, leave this screen or reload.
+          lock, leave this screen, switch games or reload.
         </p>
         <div className="unlock-row">
           <label className="sr-only" htmlFor="admin-key">
@@ -126,7 +146,7 @@ type Pending =
   | { kind: "revoke"; key: KeyRow }
   | null;
 
-function KeyManager({ adminKey, onLock }: { adminKey: string; onLock: (reason?: string | null) => void }) {
+function KeyManager({ game, adminKey, onLock }: { game: Game; adminKey: string; onLock: (reason?: string | null) => void }) {
   const [keys, setKeys] = useState<KeyRow[] | null>(null);
   const [audit, setAudit] = useState<{ items: AuditRow[]; nextCursor: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -210,7 +230,7 @@ function KeyManager({ adminKey, onLock }: { adminKey: string; onLock: (reason?: 
 
   const header = (
     <div className="filters">
-      <span className="lock-state lock-open">🔓 Unlocked</span>
+      <span className="lock-state lock-open">🔓 Unlocked: {gameLabel(game)}</span>
       <button type="button" className="btn-ghost btn-small" onClick={() => refresh()}>
         Refresh
       </button>
@@ -222,9 +242,9 @@ function KeyManager({ adminKey, onLock }: { adminKey: string; onLock: (reason?: 
 
   return (
     <>
-      <Panel title="API keys" action={header}>
+      <Panel title={`API keys · ${gameLabel(game)}`} action={header}>
         {error && <div className="banner">{error}</div>}
-        {readRotation && <ReadKeyNote rotated={readRotation} />}
+        {readRotation && <ReadKeyNote rotated={readRotation} slug={game.slug} />}
 
         <div className="rotate-bar">
           <label>
@@ -324,7 +344,7 @@ function KeyManager({ adminKey, onLock }: { adminKey: string; onLock: (reason?: 
         </Modal>
       )}
 
-      {newKey && <NewKeyModal rotated={newKey} onDone={() => setNewKey(null)} />}
+      {newKey && <NewKeyModal rotated={newKey} slug={game.slug} onDone={() => setNewKey(null)} />}
     </>
   );
 }
@@ -423,19 +443,34 @@ function AuditList({ items }: { items: AuditRow[] }) {
   );
 }
 
-function ReadKeyNote({ rotated }: { rotated: RotatedKey }) {
+// Where the new read key goes on the server: this game's entry in OCULUS_READ_KEYS.
+function ReadKeySetting({ slug }: { slug: string }) {
+  return (
+    <>
+      <code className="mono">{slug}=</code> in <code className="mono">OCULUS_READ_KEYS</code>
+      {slug === "main" && (
+        <>
+          {" "}
+          (or <code className="mono">OCULUS_READ_KEY</code>, if your <code className="mono">.env</code> uses that)
+        </>
+      )}
+    </>
+  );
+}
+
+function ReadKeyNote({ rotated, slug }: { rotated: RotatedKey; slug: string }) {
   const until = rotated.previous[0]?.expiresAt;
   const ended = !until || Date.parse(until) <= Date.now();
   return (
     <div className="banner banner-amber" role="status">
-      You rotated the read key. Put the new key in <code className="mono">OCULUS_READ_KEY</code> on the server (
+      You rotated the read key. Put the new key after <ReadKeySetting slug={slug} /> on the server (
       <code className="mono">.env</code>, then <code className="mono">docker compose --profile deploy up -d web</code>)
       {ended ? ". The old key has already stopped, so the dashboard can't load data until then." : ` before ${formatDateTime(until)}, when the old key stops.`}
     </div>
   );
 }
 
-function NewKeyModal({ rotated, onDone }: { rotated: RotatedKey; onDone: () => void }) {
+function NewKeyModal({ rotated, slug, onDone }: { rotated: RotatedKey; slug: string; onDone: () => void }) {
   const [copied, setCopied] = useState<"yes" | "failed" | null>(null);
   const field = useRef<HTMLInputElement>(null);
 
@@ -488,7 +523,7 @@ function NewKeyModal({ rotated, onDone }: { rotated: RotatedKey; onDone: () => v
       )}
       {rotated.scope === "read" ? (
         <p>
-          Next: set <code className="mono">OCULUS_READ_KEY</code> to this key on the server before the old one stops.
+          Next: put this key after <ReadKeySetting slug={slug} /> on the server before the old one stops.
         </p>
       ) : (
         <p>

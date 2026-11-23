@@ -66,9 +66,10 @@ docker compose --profile deploy exec api node dist/bin/create-key.js --game "My 
 ```
 
 (The universe id only has to be unique in Oculus; any number you don't use for a real game works.)
-A dashboard read key belongs to one game, so to *see* the test game's events, point a dashboard at
-it: locally with `npm run dev` and a read key for the test game in `web/.env.local`, or temporarily
-swap `OCULUS_READ_KEY` on the server.
+To *see* the test game's events, create a read key for it too and add it to `OCULUS_READ_KEYS`
+on the server (e.g. `...,my-game-test=<its read key>`, then `docker compose --profile deploy up -d web`):
+it then appears in the dashboard's game menu. See "More than one game" in
+[deploy-oracle.md](deploy-oracle.md#more-than-one-game).
 
 Studio has its own **local secrets**: **File → Experience Settings → Security → Local Secrets**.
 Add `OculusApiKey` there with the test key, following the form Studio shows. Roblox's secrets

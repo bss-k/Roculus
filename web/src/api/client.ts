@@ -121,14 +121,49 @@ export interface RemoteDetail {
 
 const BASE = "/dash/v1";
 
-async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(BASE + path, { signal });
+/*
+  Which game the /dash/v1 calls are for. The browser only ever sends the game's slug (in
+  X-Oculus-Game); nginx in deploy, or the Vite proxy in dev, swaps it for that game's read key,
+  so no read key reaches the browser. Set by the app before any screen mounts, and again when
+  the game picker changes (which also remounts every screen, so nothing mixes two games).
+*/
+let requestGame = "";
+export function setRequestGame(slug: string) {
+  requestGame = slug;
+}
+
+async function getJsonFor<T>(game: string, path: string, signal?: AbortSignal): Promise<T> {
+  // no-store: the same URL answers differently for each game, so never reuse a cached reply.
+  const res = await fetch(BASE + path, { signal, headers: { "x-oculus-game": game }, cache: "no-store" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.message ?? `request failed (${res.status})`);
   }
   return res.json() as Promise<T>;
 }
+
+function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return getJsonFor<T>(requestGame, path, signal);
+}
+
+// A game as the API describes it (api/src/repo/keys.ts GameInfo).
+export interface GameInfo {
+  name: string;
+  universeId: number;
+}
+
+export const gamesApi = {
+  // The games this dashboard has read keys for: slugs only (written from OCULUS_READ_KEYS).
+  list: async (signal?: AbortSignal): Promise<string[]> => {
+    const res = await fetch("/dash/games.json", { signal, cache: "no-store" });
+    if (!res.ok) throw new Error(`couldn't load the game list (${res.status})`);
+    const body = (await res.json()) as { games: { slug: string }[] };
+    return body.games.map((g) => g.slug);
+  },
+  // The name and universe behind one slug, asked with that game's own read key.
+  info: (slug: string, signal?: AbortSignal) =>
+    getJsonFor<{ game: GameInfo }>(slug, "/game", signal).then((r) => r.game),
+};
 
 // Builds a query string, leaving out unset params (the API rejects unknown or empty ones).
 function qs(params: Record<string, string | number | undefined>): string {
@@ -264,6 +299,8 @@ async function adminJson<T>(adminKey: string, method: "GET" | "POST", path: stri
 }
 
 export const adminApi = {
+  // Which game this admin key manages; also proves the key works.
+  game: (adminKey: string) => adminJson<{ game: GameInfo }>(adminKey, "GET", "/game").then((r) => r.game),
   keys: (adminKey: string) => adminJson<{ items: KeyRow[] }>(adminKey, "GET", "/keys").then((r) => r.items),
   rotate: (adminKey: string, scope: "ingest" | "read", graceHours: number) =>
     adminJson<RotatedKey>(adminKey, "POST", "/keys/rotate", { scope, graceHours }),

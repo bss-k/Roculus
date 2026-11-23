@@ -40,6 +40,7 @@ async function hashStrings() {
 }
 
 const ENDPOINTS: [string, string][] = [
+  ["GET", "/v1/admin/game"],
   ["GET", "/v1/admin/keys"],
   ["POST", "/v1/admin/keys/rotate"],
   ["POST", "/v1/admin/keys/00000000-0000-4000-8000-000000000000/revoke"],

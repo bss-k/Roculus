@@ -50,6 +50,20 @@ export async function upsertGame(db: Db, name: string, universeId: number): Prom
   return rows[0]!.id;
 }
 
+export interface GameInfo {
+  name: string;
+  universeId: number;
+}
+
+// The game a key belongs to, as the dashboard shows it (name and Roblox universe ID).
+export async function getGame(db: Db, gameId: string): Promise<GameInfo> {
+  const { rows } = await db.query<GameInfo>(
+    `SELECT name, universe_id AS "universeId" FROM games WHERE id = $1`,
+    [gameId],
+  );
+  return rows[0]!;
+}
+
 export const MAX_GRACE_HOURS = 168; // 7 days
 
 export interface PreviousKey {
