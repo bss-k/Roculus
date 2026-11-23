@@ -1,6 +1,6 @@
-# Deploying Oculus on an Oracle Cloud Always Free VM
+# Deploying Roculus on an Oracle Cloud Always Free VM
 
-This takes you from an empty Oracle Cloud account to Oculus running at `https://<your domain>`,
+This takes you from an empty Oracle Cloud account to Roculus running at `https://<your domain>`,
 with game servers posting to `https://<your domain>/v1/events` and the dashboard behind a login.
 
 Every command after "Install Docker" was run end to end on a local copy of this deploy
@@ -26,7 +26,7 @@ Ampere A1 shape `VM.Standard.A1.Flex`:
 - 200 GB of block storage in total, boot volumes included (a boot volume is 50 GB by default);
 - 10 TB of outbound data per month;
 - idle instances "may be reclaimed": an instance counts as idle when, over 7 days, 95th-percentile
-  CPU, network and (for A1) memory utilization are all under 20%. A lightly used Oculus can look
+  CPU, network and (for A1) memory utilization are all under 20%. A lightly used Roculus can look
   idle, so keep copies of your backups off the VM (section 9).
 
 If the page says something different, follow the page. Then, in the Oracle Cloud console:
@@ -78,7 +78,7 @@ You'll test both layers from outside in section 6.
 
 Follow Docker's official guide for Ubuntu:
 <https://docs.docker.com/engine/install/ubuntu/> ("Install using the apt repository"). It installs
-Docker Engine and the Compose plugin; all images Oculus uses are published for ARM (aarch64).
+Docker Engine and the Compose plugin; all images Roculus uses are published for ARM (aarch64).
 Then let your user run docker without sudo, and log out and back in:
 
 ```bash

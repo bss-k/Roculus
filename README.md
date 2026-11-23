@@ -1,6 +1,6 @@
-# Oculus
+# Roculus
 
-[![CI](https://github.com/bss-k/oculus/actions/workflows/ci.yml/badge.svg)](https://github.com/bss-k/oculus/actions/workflows/ci.yml)
+[![CI](https://github.com/bss-k/Roculus/actions/workflows/ci.yml/badge.svg)](https://github.com/bss-k/Roculus/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node 20+](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)

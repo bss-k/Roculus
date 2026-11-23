@@ -1,14 +1,14 @@
 # Connecting a Roblox game
 
-How to get Remote-Guard violations from your game's servers into Oculus, test it in Studio, and
-rotate the key later. You need a deployed Oculus ([deploy-oracle.md](deploy-oracle.md)) and an
+How to get Remote-Guard violations from your game's servers into Roculus, test it in Studio, and
+rotate the key later. You need a deployed Roculus ([deploy-oracle.md](deploy-oracle.md)) and an
 **ingest** key for your game (`create-key ... --scope ingest`).
 
 Roblox references used below: [Secrets store](https://create.roblox.com/docs/cloud-services/secrets)
 and [`HttpService:GetSecret`](https://create.roblox.com/docs/reference/engine/classes/HttpService#GetSecret).
 Check them if the menus have moved.
 
-## How the key gets to Oculus
+## How the key gets to Roculus
 
 `OculusClient.luau` runs on the **server** only. It reads the key with
 `HttpService:GetSecret("OculusApiKey")` and only ever puts it in the `Authorization` header:
@@ -28,7 +28,7 @@ In the [Creator Dashboard](https://create.roblox.com/dashboard/creations): selec
 
 - **Name:** `OculusApiKey` (or pass another name as `secretName` to `Oculus.new`)
 - **Secret:** the ingest key (`ocl_…`)
-- **Domain:** your Oculus host exactly, e.g. `oculus.example.com`. The secret can then only be sent
+- **Domain:** your Roculus host exactly, e.g. `oculus.example.com`. The secret can then only be sent
   to that host. Avoid `*`.
 
 ## 3. Add the client and connect it to Remote-Guard
@@ -59,13 +59,13 @@ If the secret can't be loaded, the client disables itself and warns once in the 
 
 ## 4. Testing in Studio
 
-**Use a separate test game in Oculus,** so play-test events don't mix with live data:
+**Use a separate test game in Roculus,** so play-test events don't mix with live data:
 
 ```bash
 docker compose --profile deploy exec api node dist/bin/create-key.js --game "My Game (test)" --universe <a different id> --scope ingest
 ```
 
-(The universe id only has to be unique in Oculus; any number you don't use for a real game works.)
+(The universe id only has to be unique in Roculus; any number you don't use for a real game works.)
 To *see* the test game's events, create a read key for it too and add it to `OCULUS_READ_KEYS`
 on the server (e.g. `...,my-game-test=<its read key>`, then `docker compose --profile deploy up -d web`):
 it then appears in the dashboard's game menu. See "More than one game" in

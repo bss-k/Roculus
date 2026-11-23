@@ -498,7 +498,7 @@ function NewKeyModal({ rotated, slug, onDone }: { rotated: RotatedKey; slug: str
       }
     >
       <p className="error-text">
-        <strong>Copy it now: this is the only time it&apos;s shown.</strong> Oculus keeps only a hash of it, so it
+        <strong>Copy it now: this is the only time it&apos;s shown.</strong> Roculus keeps only a hash of it, so it
         can&apos;t be shown again. If it&apos;s lost, rotate again.
       </p>
       <div className="key-reveal">

@@ -26,7 +26,7 @@ export function App() {
         <div className="topbar-start">
           <div className="brand">
             <span className="brand-mark" aria-hidden />
-            Oculus
+            Roculus
           </div>
           {games && current && <GamePicker games={games} current={current} onChange={select} />}
         </div>

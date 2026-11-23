@@ -38,4 +38,4 @@ First release: ingest, dashboard, key management and a production deploy setup.
 ### Upgrading
 - Fresh install: the API applies migrations `001`–`003` on start.
 
-[1.0.0]: https://github.com/bss-k/oculus/releases/tag/v1.0.0
+[1.0.0]: https://github.com/bss-k/Roculus/releases/tag/v1.0.0

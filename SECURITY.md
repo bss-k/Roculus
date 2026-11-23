@@ -1,6 +1,6 @@
 # Security policy
 
-Oculus is a security tool, so reports are welcome.
+Roculus is a security tool, so reports are welcome.
 
 ## Reporting a vulnerability
 
