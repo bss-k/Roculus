@@ -73,7 +73,7 @@ export function ViolationTimeline({ filter }: { filter: Filter }) {
         <ul className="feed timeline">
           {items.map((v) => (
             <li key={v.id}>
-              <ModeBadge mode={v.mode} />
+              <ModeBadge mode={v.mode} kind="result" />
               <div className="feed-body">
                 <div>
                   {byPlayer ? (

@@ -22,7 +22,7 @@ export function ViolationsTable({ items }: { items: Violation[] }) {
             <tr key={v.id}>
               <td className="nowrap">{formatDateTime(v.occurredAt)}</td>
               <td>
-                <ModeBadge mode={v.mode} />
+                <ModeBadge mode={v.mode} kind="result" />
               </td>
               <td className="rule">{v.rule}</td>
               <td className="mono">{v.remote}</td>
