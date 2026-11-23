@@ -9,6 +9,9 @@ Security telemetry for games. Game servers running [Remote-Guard](https://github
 report exploit and violation events to a hardened ingest API; a dashboard shows what is being
 attacked, by whom, and whether the guard is blocking it (`enforce`) or only watching (`shadow`).
 
+![Roculus Overview screen with sample data](docs/overview.png)
+<sub>Overview screen with generated sample data, not production traffic.</sub>
+
 ## Architecture
 
 ```mermaid
