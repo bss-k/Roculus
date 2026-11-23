@@ -1,7 +1,7 @@
 # Build context: repo root (see docker-compose.yml).
 
 # 1) Compile TypeScript with dev dependencies available.
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY api/package.json api/
@@ -11,7 +11,7 @@ COPY api ./api
 RUN npm run build -w api
 
 # 2) Runtime image: production dependencies + compiled JS only, running as a non-root user.
-FROM node:22-alpine
+FROM node:26-alpine
 ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json package-lock.json ./
