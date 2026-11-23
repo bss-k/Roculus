@@ -1,5 +1,10 @@
 # Oculus
 
+[![CI](https://github.com/bss-k/oculus/actions/workflows/ci.yml/badge.svg)](https://github.com/bss-k/oculus/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Node 20+](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
+
 Security telemetry for games. Game servers running [Remote-Guard](https://github.com/bss-k/Remote-Guard)
 report exploit and violation events to a hardened ingest API; a dashboard shows what is being
 attacked, by whom, and whether the guard is blocking it (`enforce`) or only watching (`shadow`).
@@ -256,3 +261,7 @@ volume next to each:
 - **Backups.** Dump size and duration from `docker compose logs backup`, and how long a restore
   drill takes.
 - **VM headroom.** `docker stats` (CPU, memory per service) against the Always Free allowance.
+
+## License
+
+[MIT](LICENSE). Security reports: see [SECURITY.md](SECURITY.md).

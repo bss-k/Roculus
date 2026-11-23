@@ -1,0 +1,21 @@
+# Weekly dependency update PRs. Each ecosystem's updates are grouped into one PR.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directories: ["/api", "/web"]
+    schedule:
+      interval: weekly
